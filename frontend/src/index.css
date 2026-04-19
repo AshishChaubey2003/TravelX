@@ -1,0 +1,6 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'DM Sans', sans-serif; background: #080C14; color: #F1F5F9; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0D1421; }
+::-webkit-scrollbar-thumb { background: #F97316; border-radius: 3px; }
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
