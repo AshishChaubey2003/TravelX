@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import toast from "react-hot-toast";
-import { createBooking, createCheckout } from "../api";
+import axios from "axios";
+import { createBooking } from "../api";
 import { useAuth } from "../context/AuthContext";
 
 export default function BookingModal({ type, item, onClose }) {
@@ -30,6 +31,7 @@ export default function BookingModal({ type, item, onClose }) {
     }
     setLoading(true);
     try {
+      // Step 1 — Booking create karo
       const body = {
         check_in: form.check_in,
         check_out: form.check_out,
@@ -42,12 +44,61 @@ export default function BookingModal({ type, item, onClose }) {
       }
       if (type === "vehicle") body.vehicle_id = item.id;
 
-      const { data } = await createBooking(body);
-      toast.success("Booking created! Redirecting to payment...");
+      const { data: booking } = await createBooking(body);
+      toast.success("Booking created! Opening payment...");
 
-      const { data: payData } = await createCheckout(data.id);
-      if (payData.checkout_url) window.open(payData.checkout_url, "_blank");
-      onClose();
+      // Step 2 — Razorpay order create karo
+      const { data: order } = await axios.post(
+        "http://localhost:8000/api/v1/payments/razorpay/create-order/",
+        { booking_id: booking.id },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+
+      // Step 3 — Razorpay checkout open karo
+      const options = {
+        key: order.key_id,
+        amount: order.amount,
+        currency: order.currency,
+        name: "TravelX",
+        description: `Booking #${booking.id.slice(0, 8).toUpperCase()}`,
+        order_id: order.order_id,
+        prefill: {
+          email: order.user_email,
+          name: order.user_name,
+        },
+        theme: { color: "#F97316" },
+        handler: async (response) => {
+          // Step 4 — Payment verify karo
+          try {
+            const { data } = await axios.post(
+              "http://localhost:8000/api/v1/payments/razorpay/verify/",
+              {
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                booking_id: booking.id,
+              },
+              { headers: { Authorization: `Bearer ${token}` } },
+            );
+            if (data.success) {
+              toast.success("Payment successful! 🎉");
+              onClose();
+              window.location.href = "/payment-success";
+            }
+          } catch (e) {
+            toast.error("Payment verification failed!");
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            toast.error("Payment cancelled!");
+            setLoading(false);
+          },
+        },
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
     } catch (e) {
       toast.error(e.response?.data?.error || "Booking failed");
     }
@@ -100,6 +151,7 @@ export default function BookingModal({ type, item, onClose }) {
           maxWidth: "480px",
         }}
       >
+        {/* Header */}
         <div
           style={{
             display: "flex",
@@ -240,6 +292,25 @@ export default function BookingModal({ type, item, onClose }) {
           </div>
         )}
 
+        {/* Payment Info */}
+        <div
+          style={{
+            background: "rgba(249,115,22,0.05)",
+            border: "1px solid rgba(249,115,22,0.15)",
+            borderRadius: "10px",
+            padding: "0.75rem 1rem",
+            marginBottom: "1.25rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+        >
+          <span>🔒</span>
+          <span style={{ fontSize: "0.8rem", color: "#94A3B8" }}>
+            Secure payment via Razorpay — UPI, Cards, Net Banking supported
+          </span>
+        </div>
+
         <button
           onClick={handleBook}
           disabled={loading}
@@ -257,7 +328,7 @@ export default function BookingModal({ type, item, onClose }) {
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >
-          {loading ? "Processing..." : "Confirm & Pay →"}
+          {loading ? "Processing..." : "Confirm & Pay via Razorpay →"}
         </button>
       </div>
     </div>

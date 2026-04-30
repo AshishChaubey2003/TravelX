@@ -8,6 +8,8 @@ class Vehicle(TimeStampedModel):
         ('BIKE', 'Bike'),
         ('CAR', 'Car'),
         ('SCOOTER', 'Scooter'),
+        
+        
     ]
 
     city = models.ForeignKey(City, on_delete=models.CASCADE, related_name='vehicles', db_index=True)
@@ -21,6 +23,7 @@ class Vehicle(TimeStampedModel):
 
     class Meta:
         ordering = ['price_per_day']
+        
 
     def __str__(self):
         return f"{self.name} - {self.city.name}"

@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from "react";
-import toast from "react-hot-toast";
 import { planTrip } from "../api";
 
 export default function AIChat() {
@@ -7,10 +6,20 @@ export default function AIChat() {
     {
       from: "ai",
       text: "Hey! 👋 I'm your AI travel planner. Tell me where you want to go and your budget — I'll plan the perfect trip!",
+      options: [
+        {
+          label: "Plan Goa trip under ₹10k",
+          value: "Plan Goa trip under ₹10k",
+        },
+        { label: "Best hotels in Manali", value: "Plan Manali trip" },
+        { label: "Adventure in Jaipur", value: "Plan Jaipur trip" },
+      ],
+      type: "options",
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [session, setSession] = useState({ step: "initial" });
   const messagesRef = useRef(null);
 
   useEffect(() => {
@@ -18,20 +27,54 @@ export default function AIChat() {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
   }, [messages]);
 
-  const sendMsg = async () => {
-    if (!input.trim() || loading) return;
-    const userMsg = input.trim();
+  const sendMsg = async (text, optionName, optionPrice) => {
+    const userMsg = text || input.trim();
+    if (!userMsg || loading) return;
     setInput("");
-    setMessages((prev) => [...prev, { from: "user", text: userMsg }]);
+
+    setMessages((prev) => [
+      ...prev,
+      { from: "user", text: optionName || userMsg },
+    ]);
     setLoading(true);
 
     try {
-      const { data } = await planTrip(userMsg);
+      const { data } = await planTrip({
+        query: userMsg,
+        session: {
+          ...session,
+          option_name: optionName,
+          option_price: optionPrice,
+        },
+      });
+
+      setSession(data.session || { step: "initial" });
+
+      if (userMsg === "restart") {
+        setSession({ step: "initial" });
+        setMessages([
+          {
+            from: "ai",
+            text: "Hey! 👋 Where would you like to go next?",
+            options: [
+              { label: "Plan Goa trip", value: "Plan Goa trip" },
+              { label: "Plan Manali trip", value: "Plan Manali trip" },
+              { label: "Plan Jaipur trip", value: "Plan Jaipur trip" },
+            ],
+            type: "options",
+          },
+        ]);
+        setLoading(false);
+        return;
+      }
+
       setMessages((prev) => [
         ...prev,
         {
           from: "ai",
-          text: data.response || data.output || "Here is your plan!",
+          text: data.response,
+          options: data.options || [],
+          type: data.type || "text",
         },
       ]);
     } catch {
@@ -39,18 +82,23 @@ export default function AIChat() {
         ...prev,
         {
           from: "ai",
-          text: "AI service is being configured. Meanwhile, browse cities and hotels above! 🗺️",
+          text: "AI service error. Please try again! 🔄",
+          options: [],
+          type: "text",
         },
       ]);
     }
     setLoading(false);
   };
 
-  const suggestions = [
-    "Plan Goa trip under ₹10k",
-    "Best hotels in Manali",
-    "Adventure in Rishikesh",
-  ];
+  const renderText = (text) => {
+    return text.split("\n").map((line, i) => {
+      const bold = line.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+      return (
+        <div key={i} dangerouslySetInnerHTML={{ __html: bold || "&nbsp;" }} />
+      );
+    });
+  };
 
   return (
     <div
@@ -59,6 +107,9 @@ export default function AIChat() {
         border: "1px solid rgba(255,255,255,0.12)",
         borderRadius: "20px",
         overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        height: "520px",
       }}
     >
       {/* Header */}
@@ -69,6 +120,7 @@ export default function AIChat() {
           display: "flex",
           alignItems: "center",
           gap: "0.75rem",
+          background: "#0D1421",
         }}
       >
         <div
@@ -89,13 +141,38 @@ export default function AIChat() {
           <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>TravelX AI</div>
           <div style={{ fontSize: "0.75rem", color: "#10B981" }}>● Online</div>
         </div>
+        <button
+          onClick={() => {
+            setSession({ step: "initial" });
+            setMessages([
+              {
+                from: "ai",
+                text: "Hey! 👋 Where would you like to go?",
+                options: [],
+                type: "text",
+              },
+            ]);
+          }}
+          style={{
+            marginLeft: "auto",
+            background: "transparent",
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: "8px",
+            color: "#64748B",
+            padding: "0.25rem 0.75rem",
+            cursor: "pointer",
+            fontSize: "0.75rem",
+          }}
+        >
+          🔄 Reset
+        </button>
       </div>
 
       {/* Messages */}
       <div
         ref={messagesRef}
         style={{
-          height: "300px",
+          flex: 1,
           overflowY: "auto",
           padding: "1.25rem",
           display: "flex",
@@ -104,57 +181,104 @@ export default function AIChat() {
         }}
       >
         {messages.map((msg, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              gap: "0.75rem",
-              flexDirection: msg.from === "user" ? "row-reverse" : "row",
-            }}
-          >
+          <div key={i}>
             <div
               style={{
-                width: "30px",
-                height: "30px",
-                borderRadius: "8px",
-                background:
-                  msg.from === "ai"
-                    ? "linear-gradient(135deg, #F97316, #F59E0B)"
-                    : "#1A2540",
-                border: "1px solid rgba(255,255,255,0.12)",
                 display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.8rem",
-                flexShrink: 0,
+                gap: "0.75rem",
+                flexDirection: msg.from === "user" ? "row-reverse" : "row",
               }}
             >
-              {msg.from === "ai" ? "🤖" : "👤"}
+              <div
+                style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  background:
+                    msg.from === "ai"
+                      ? "linear-gradient(135deg, #F97316, #F59E0B)"
+                      : "#1A2540",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "0.8rem",
+                  flexShrink: 0,
+                }}
+              >
+                {msg.from === "ai" ? "🤖" : "👤"}
+              </div>
+              <div
+                style={{
+                  padding: "0.75rem 1rem",
+                  borderRadius: "12px",
+                  fontSize: "0.875rem",
+                  lineHeight: 1.65,
+                  maxWidth: "85%",
+                  background:
+                    msg.from === "ai"
+                      ? "#111827"
+                      : "linear-gradient(135deg, #F97316, #EA580C)",
+                  border:
+                    msg.from === "ai"
+                      ? "1px solid rgba(255,255,255,0.07)"
+                      : "none",
+                  color: msg.from === "ai" ? "#CBD5E1" : "white",
+                }}
+              >
+                {renderText(msg.text)}
+              </div>
             </div>
-            <div
-              style={{
-                padding: "0.75rem 1rem",
-                borderRadius: "12px",
-                fontSize: "0.875rem",
-                lineHeight: 1.55,
-                maxWidth: "80%",
-                background:
-                  msg.from === "ai"
-                    ? "#111827"
-                    : "linear-gradient(135deg, #F97316, #EA580C)",
-                border:
-                  msg.from === "ai"
-                    ? "1px solid rgba(255,255,255,0.07)"
-                    : "none",
-                color: msg.from === "ai" ? "#94A3B8" : "white",
-              }}
-            >
-              {msg.text}
-            </div>
+
+            {/* Option Buttons */}
+            {msg.from === "ai" &&
+              msg.options &&
+              msg.options.length > 0 &&
+              i === messages.length - 1 &&
+              !loading && (
+                <div
+                  style={{
+                    marginTop: "0.75rem",
+                    marginLeft: "42px",
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "0.5rem",
+                  }}
+                >
+                  {msg.options.map((opt, j) => (
+                    <button
+                      key={j}
+                      onClick={() => sendMsg(opt.value, opt.label, opt.price)}
+                      style={{
+                        padding: "0.5rem 1rem",
+                        borderRadius: "20px",
+                        background: "#1A2540",
+                        border: "1px solid rgba(249,115,22,0.3)",
+                        color: "#FB923C",
+                        fontSize: "0.8rem",
+                        cursor: "pointer",
+                        fontWeight: 500,
+                        transition: "all 0.2s",
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.target.style.background = "rgba(249,115,22,0.15)")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.target.style.background = "#1A2540")
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
           </div>
         ))}
+
         {loading && (
-          <div style={{ display: "flex", gap: "0.75rem" }}>
+          <div
+            style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}
+          >
             <div
               style={{
                 width: "30px",
@@ -177,42 +301,17 @@ export default function AIChat() {
                 border: "1px solid rgba(255,255,255,0.07)",
                 color: "#64748B",
                 fontSize: "0.875rem",
+                display: "flex",
+                gap: "4px",
+                alignItems: "center",
               }}
             >
-              Thinking... ✨
+              <span style={{ animation: "pulse 1s infinite" }}>●</span>
+              <span style={{ animation: "pulse 1s infinite 0.2s" }}>●</span>
+              <span style={{ animation: "pulse 1s infinite 0.4s" }}>●</span>
             </div>
           </div>
         )}
-      </div>
-
-      {/* Suggestions */}
-      <div
-        style={{
-          padding: "0 1.25rem 0.75rem",
-          display: "flex",
-          gap: "0.5rem",
-          flexWrap: "wrap",
-        }}
-      >
-        {suggestions.map((s) => (
-          <button
-            key={s}
-            onClick={() => {
-              setInput(s);
-            }}
-            style={{
-              padding: "0.35rem 0.75rem",
-              borderRadius: "20px",
-              background: "#111827",
-              border: "1px solid rgba(255,255,255,0.07)",
-              fontSize: "0.75rem",
-              color: "#94A3B8",
-              cursor: "pointer",
-            }}
-          >
-            {s}
-          </button>
-        ))}
       </div>
 
       {/* Input */}
@@ -222,6 +321,7 @@ export default function AIChat() {
           borderTop: "1px solid rgba(255,255,255,0.07)",
           display: "flex",
           gap: "0.75rem",
+          background: "#0D1421",
         }}
       >
         <input
@@ -231,7 +331,7 @@ export default function AIChat() {
           placeholder="Ask me anything about your trip..."
           style={{
             flex: 1,
-            background: "#111827",
+            background: "#141E2E",
             border: "1px solid rgba(255,255,255,0.12)",
             borderRadius: "10px",
             padding: "0.75rem 1rem",
@@ -241,7 +341,7 @@ export default function AIChat() {
           }}
         />
         <button
-          onClick={sendMsg}
+          onClick={() => sendMsg()}
           style={{
             width: "42px",
             height: "42px",

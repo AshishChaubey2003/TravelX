@@ -77,6 +77,19 @@ export default function Navbar() {
           >
             AI Planner
           </a>
+          {token && (
+            <Link
+              to="/my-bookings"
+              style={{
+                color: "#F97316",
+                textDecoration: "none",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+              }}
+            >
+              📋 My Bookings
+            </Link>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: "0.75rem" }}>

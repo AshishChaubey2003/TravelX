@@ -6,6 +6,8 @@ from .serializers import CitySerializer
 class CityListView(generics.ListAPIView):
     serializer_class = CitySerializer
     permission_classes = [AllowAny]
+    authentication_classes = []
+    
 
     def get_queryset(self):
         queryset = City.objects.filter(is_active=True)

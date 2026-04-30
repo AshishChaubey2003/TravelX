@@ -11,6 +11,7 @@ API.interceptors.request.use((config) => {
 });
 
 export const getCities = () => API.get("/cities/");
+export const getCity = (id) => API.get(`/cities/${id}/`);
 export const getHotels = (cityId) => API.get(`/hotels/?city=${cityId}`);
 export const getAdventures = (cityId) => API.get(`/adventures/?city=${cityId}`);
 export const getVehicles = (cityId) => API.get(`/vehicles/?city=${cityId}`);
@@ -19,6 +20,6 @@ export const register = (data) => API.post("/auth/register/", data);
 export const createBooking = (data) => API.post("/bookings/", data);
 export const createCheckout = (bookingId) =>
   API.post("/payments/create-checkout/", { booking_id: bookingId });
-export const planTrip = (query) => API.post("/ai/plan/", { query });
+export const planTrip = (payload) => API.post("/ai/plan/", payload);
 
 export default API;

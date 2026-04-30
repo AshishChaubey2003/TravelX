@@ -1,76 +1,66 @@
-import stripe
+import razorpay
 from django.conf import settings
 from .models import Payment
 from apps.bookings.models import Booking
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
+razorpay_client = razorpay.Client(
+    auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+)
 
 
-class StripeService:
+class RazorpayService:
 
     @staticmethod
-    def create_checkout_session(booking):
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'inr',
-                    'product_data': {
-                        'name': f'TravelX Booking #{str(booking.id)[:8]}',
-                    },
-                    'unit_amount': int(booking.total_amount * 100),
-                },
-                'quantity': 1,
-            }],
-            mode='payment',
-            success_url='http://localhost:8000/api/v1/payments/success/?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url='http://localhost:8000/api/v1/payments/cancel/',
-            metadata={
+    def create_order(booking):
+        amount = int(booking.total_amount * 100)
+
+        order = razorpay_client.order.create({
+            'amount': amount,
+            'currency': 'INR',
+            'receipt': str(booking.id)[:40],
+            'notes': {
                 'booking_id': str(booking.id),
+                'user_email': booking.user.email,
+            }
+        })
+
+        Payment.objects.get_or_create(
+            booking=booking,
+            defaults={
+                'amount': booking.total_amount,
+                'currency': 'inr',
+                'status': 'PENDING',
+                'stripe_session_id': order['id'],
             }
         )
 
-        # Payment record banao
-        Payment.objects.create(
-            booking=booking,
-            stripe_session_id=session.id,
-            amount=booking.total_amount,
-            currency='inr',
-            status='PENDING',
-        )
-
-        # Booking mein session id save karo
-        booking.stripe_session_id = session.id
+        booking.stripe_session_id = order['id']
         booking.save()
 
-        return session
+        return order
 
     @staticmethod
-    def handle_webhook(payload, sig_header):
+    def verify_payment(razorpay_order_id, razorpay_payment_id, razorpay_signature):
         try:
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+            razorpay_client.utility.verify_payment_signature({
+                'razorpay_order_id': razorpay_order_id,
+                'razorpay_payment_id': razorpay_payment_id,
+                'razorpay_signature': razorpay_signature,
+            })
+            return True
+        except:
+            return False
+
+    @staticmethod
+    def process_refund(payment, amount=None):
+        try:
+            refund_amount = int((amount or payment.amount) * 100)
+            refund = razorpay_client.payment.refund(
+                payment.stripe_payment_intent_id,
+                {'amount': refund_amount}
             )
-        except ValueError:
-            raise ValueError("Invalid payload")
-        except stripe.error.SignatureVerificationError:
-            raise ValueError("Invalid signature")
-
-        if event['type'] == 'checkout.session.completed':
-            session = event['data']['object']
-            booking_id = session['metadata']['booking_id']
-
-            try:
-                booking = Booking.objects.get(id=booking_id)
-                booking.status = 'PAID'
-                booking.save()
-
-                payment = Payment.objects.get(stripe_session_id=session['id'])
-                payment.status = 'SUCCESS'
-                payment.stripe_payment_intent_id = session.get('payment_intent')
-                payment.save()
-
-            except Booking.DoesNotExist:
-                pass
-
-        return event
+            payment.status = 'REFUNDED'
+            payment.save()
+            return refund
+        except Exception as e:
+            raise ValueError(f'Refund failed: {str(e)}')

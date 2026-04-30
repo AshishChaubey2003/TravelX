@@ -26,4 +26,5 @@ urlpatterns = [
     path('api/v1/auth/', include('apps.accounts.urls')),
     path('api/v1/bookings/', include('apps.bookings.urls')),
     path('api/v1/payments/', include('apps.payments.urls')),
+    path('api/v1/ai/', include('apps.ai_agent.urls')),
 ]

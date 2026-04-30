@@ -6,6 +6,9 @@ import Navbar from "./components/Navbar";
 import Home from "./pages/Home";
 import Explore from "./pages/Explore";
 import "./App.css";
+import MyBookings from "./pages/MyBookings";
+import PaymentSuccess from "./pages/PaymentSuccess";
+import PaymentCancel from "./pages/PaymentCancel";
 
 function App() {
   return (
@@ -25,6 +28,9 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/explore" element={<Explore />} />
+          <Route path="/my-bookings" element={<MyBookings />} />
+          <Route path="/payment-success" element={<PaymentSuccess />} />
+          <Route path="/payment-cancel" element={<PaymentCancel />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

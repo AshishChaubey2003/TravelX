@@ -3,7 +3,11 @@ from .models import Booking, BookingItem
 from apps.hotels.models import Hotel
 from apps.adventures.models import Adventure
 from apps.vehicles.models import Vehicle
+from apps.kafka_events.producers import publish_booking_created
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class BookingService:
@@ -106,5 +110,11 @@ class BookingService:
                 booking=booking,
                 **item
             )
+
+        # Kafka event publish — booking fail nahi hoga agar Kafka down ho
+        try:
+            publish_booking_created(booking)
+        except Exception as e:
+            logger.warning(f'Kafka publish failed: {e}')
 
         return booking

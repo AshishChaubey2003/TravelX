@@ -6,6 +6,8 @@ from .serializers import HotelListSerializer, HotelDetailSerializer
 class HotelListView(generics.ListAPIView):
     serializer_class = HotelListSerializer
     permission_classes = [AllowAny]
+    authentication_classes = []
+    
 
     def get_queryset(self):
         queryset = Hotel.objects.filter(is_active=True).select_related('city')
@@ -24,3 +26,4 @@ class HotelDetailView(generics.RetrieveAPIView):
     serializer_class = HotelDetailSerializer
     permission_classes = [AllowAny]
     queryset = Hotel.objects.filter(is_active=True)
+    authentication_classes = []
