@@ -1,8 +1,8 @@
-# ✈ TravelX — AI Powered Travel Booking Platform
+# ✈ TravelX — Event-Driven Travel Booking Backend
 
 ![TravelX Banner](https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=1200&q=80)
 
-> A production-ready, full-stack AI-powered travel booking platform built with Django, React, Kafka, Redis, Celery, and Stripe.
+> A production-ready, event-driven travel booking backend built with Django, DRF, Kafka, Redis, Celery, Razorpay, and Docker.
 
 ---
 
@@ -14,25 +14,17 @@
 
 ---
 
-## 📸 Screenshots
-
-| Home Page | Explore Page | Booking Flow |
-|-----------|--------------|--------------|
-| ![Home](https://via.placeholder.com/300x200) | ![Explore](https://via.placeholder.com/300x200) | ![Booking](https://via.placeholder.com/300x200) |
-
----
-
 ## 🧠 Project Overview
 
-TravelX is a scalable, production-ready travel booking platform that allows users to:
+TravelX is a scalable, production-ready travel booking backend that allows users to:
 
 - 🔍 **Search locations** — cities like Goa, Manali, Delhi, Mumbai
 - 🏨 **View hotels** with pricing, ratings, and amenities
 - 🧗 **Book adventures** — paragliding, trekking, water sports
 - 🚗 **Rent vehicles** — bikes, cars, scooters
-- 🗺 **Interactive map** — Leaflet.js + OpenStreetMap with distance
-- 💳 **Pay online** — Stripe Checkout integration
-- 🤖 **AI trip planner** — Natural language trip planning with Gemini AI
+- 💳 **Pay online** — Razorpay integration with HMAC-SHA256 signature verification
+- 📧 **OTP Email Verification** — Gmail SMTP with 10-minute expiry via Celery
+- 📬 **Event-Driven Notifications** — Kafka-powered booking & payment events
 
 ---
 
@@ -46,18 +38,8 @@ TravelX is a scalable, production-ready travel booking platform that allows user
 | **PostgreSQL** | Primary database |
 | **Redis** | Caching + Session + Celery broker |
 | **Celery** | Async task processing |
-| **Kafka** | Event-driven architecture |
-| **Stripe** | Payment processing |
-| **Gemini AI** | AI trip planning |
-
-### Frontend
-| Technology | Purpose |
-|------------|---------|
-| **React 18** | UI framework |
-| **React Router** | Client-side routing |
-| **Axios** | HTTP client |
-| **Leaflet.js** | Interactive maps |
-| **React Hot Toast** | Notifications |
+| **Apache Kafka** | Event-driven architecture |
+| **Razorpay** | Payment processing |
 
 ### DevOps
 | Technology | Purpose |
@@ -124,7 +106,7 @@ User Action ────► booking.cancelled ──► Refund Flow
 - Decouples booking service from downstream consumers
 - Events are durable — if email service crashes, it catches up on restart
 - New consumers can subscribe without touching booking code
-- Enables horizontal scaling of individual services
+- Enables horizontal scaling of individual consumer groups
 
 ---
 
@@ -136,14 +118,14 @@ City ──────┬──► Hotel
            └──► Vehicle
 
 User ──────┬──► Booking ──► BookingItem (price_at_booking snapshot)
-           └──► Payment ──► Stripe Integration
+           └──► Payment ──► Razorpay Integration
 ```
 
 ### Key Design Decisions
 - `price_at_booking` — Snapshot price to prevent price drift
-- `idempotency_key` — Stripe deduplication
 - `select_for_update()` — Prevent race conditions on inventory
 - `transaction.atomic()` — All-or-nothing booking creation
+- HMAC-SHA256 signature verification — Razorpay webhook security
 - Indexes on `city`, `status`, `user` for fast queries
 
 ---
@@ -169,7 +151,8 @@ db=2  →  Celery Broker
 
 ### Auth
 ```
-POST /api/v1/auth/register/       Register user
+POST /api/v1/auth/register/       Register user + OTP email
+POST /api/v1/auth/verify-otp/     Verify OTP
 POST /api/v1/auth/token/          Login (JWT)
 POST /api/v1/auth/token/refresh/  Refresh token
 ```
@@ -191,13 +174,9 @@ GET  /api/v1/bookings/{id}/       Booking detail
 
 ### Payments
 ```
-POST /api/v1/payments/create-checkout/  Create Stripe session
-POST /api/v1/payments/webhook/          Stripe webhook
-```
-
-### AI Agent
-```
-POST /api/v1/ai/plan/             Plan trip with AI
+POST /api/v1/payments/create-order/   Create Razorpay order
+POST /api/v1/payments/verify/         Verify payment signature
+POST /api/v1/payments/webhook/        Razorpay webhook
 ```
 
 ---
@@ -206,7 +185,6 @@ POST /api/v1/ai/plan/             Plan trip with AI
 
 ### Prerequisites
 - Docker + Docker Compose
-- Node.js 18+
 - Git
 
 ### 1. Clone the repository
@@ -221,7 +199,7 @@ cp .env.example .env
 # Edit .env with your keys
 ```
 
-### 3. Start backend with Docker
+### 3. Start with Docker
 ```bash
 docker-compose up --build
 ```
@@ -231,17 +209,10 @@ docker-compose up --build
 docker-compose exec web python manage.py createsuperuser
 ```
 
-### 5. Start React frontend
-```bash
-cd frontend
-npm install
-npm start
-```
-
-### 6. Open in browser
-- Frontend: http://localhost:3000
+### 5. Open in browser
 - Backend API: http://localhost:8000
 - Admin Panel: http://localhost:8000/admin
+- Swagger Docs: http://localhost:8000/api/docs/
 
 ---
 
@@ -262,13 +233,15 @@ REDIS_URL=redis://redis:6379/0
 # Kafka
 KAFKA_BROKER=kafka:29092
 
-# Stripe
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PUBLISHABLE_KEY=pk_test_...
+# Razorpay
+RAZORPAY_KEY_ID=rzp_test_...
+RAZORPAY_KEY_SECRET=your_secret...
 
-# AI
-GEMINI_API_KEY=your_gemini_key
+# Email (Gmail SMTP)
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=your@gmail.com
+EMAIL_HOST_PASSWORD=your_app_password
 
 # Celery
 CELERY_BROKER_URL=redis://redis:6379/2
@@ -283,22 +256,15 @@ CELERY_RESULT_BACKEND=redis://redis:6379/2
 travelx/
 ├── apps/
 │   ├── core/           # Base models, utilities
-│   ├── accounts/       # JWT auth
+│   ├── accounts/       # JWT auth + OTP verification
 │   ├── locations/      # City model + API
 │   ├── hotels/         # Hotel listings
 │   ├── adventures/     # Adventure packages
 │   ├── vehicles/       # Vehicle rentals
 │   ├── bookings/       # Booking system
-│   ├── payments/       # Stripe integration
-│   ├── kafka_events/   # Kafka producers + consumers
-│   └── ai_agent/       # AI trip planner
+│   ├── payments/       # Razorpay integration
+│   └── kafka_events/   # Kafka producers + consumers
 ├── config/             # Django settings
-├── frontend/           # React application
-│   └── src/
-│       ├── components/ # Reusable components
-│       ├── pages/      # Page components
-│       └── context/    # React context
-├── docker/             # Docker + Nginx config
 ├── tasks/              # Celery tasks
 └── docker-compose.yml
 ```
@@ -309,21 +275,21 @@ travelx/
 
 - ✅ **Race condition prevention** — `select_for_update()` + `transaction.atomic()`
 - ✅ **Price snapshot** — `price_at_booking` stored at booking time
-- ✅ **Idempotent payments** — Stripe webhook deduplication
+- ✅ **Secure payments** — Razorpay HMAC-SHA256 signature verification
 - ✅ **Event-driven** — Kafka topics for booking + payment events
-- ✅ **Redis caching** — City/hotel listings cached with TTL
-- ✅ **JWT authentication** — Access + refresh token flow
+- ✅ **Redis caching** — 3 isolated DBs (cache, session, broker) with TTL
+- ✅ **JWT authentication** — Access + refresh token rotation + RBAC
+- ✅ **OTP verification** — Email OTP via Gmail SMTP, 10-min expiry
 - ✅ **Async tasks** — Celery for emails + background jobs
-- ✅ **Interactive map** — Leaflet.js with hotel/adventure markers
-- ✅ **AI chat** — Natural language trip planning
-- ✅ **Containerized** — Full Docker Compose setup
+- ✅ **Containerized** — Full Docker Compose setup (Django + Nginx + PostgreSQL + Redis + Kafka + Celery)
+- ✅ **Swagger docs** — Auto-generated API documentation
 
 ---
 
 ## 👨‍💻 Author
 
-**Ashish Chaubey**  
-Backend Developer | Django | Python | System Design
+**Ashish Kumar Chaubey**  
+Python Backend Developer | Django | FastAPI | System Design
 
 [![GitHub](https://img.shields.io/badge/GitHub-AshishChaubey2003-black?logo=github)](https://github.com/AshishChaubey2003)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?logo=linkedin)](https://linkedin.com/in/your-profile)
