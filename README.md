@@ -71,15 +71,17 @@ TravelX is a scalable, production-ready travel booking platform that allows user
 ---
 
 ## 🏗️ System Architecture
+
+```
 ┌─────────────────────────────────────────────────────────┐
 │                    React Frontend                        │
 │              (localhost:3000)                           │
 └─────────────────────┬───────────────────────────────────┘
-│ HTTP / REST API + JWT
+                      │ HTTP / REST API + JWT
 ┌─────────────────────▼───────────────────────────────────┐
 │                 Nginx (Reverse Proxy)                    │
 └─────────────────────┬───────────────────────────────────┘
-│
+                      │
 ┌─────────────────────▼───────────────────────────────────┐
 │            Django + Gunicorn (localhost:8000)           │
 │                                                         │
@@ -92,27 +94,33 @@ TravelX is a scalable, production-ready travel booking platform that allows user
 │  │   API    │  │   API    │  │(Razorpay)│             │
 │  └──────────┘  └──────────┘  └──────────┘             │
 └────┬──────────────┬──────────────┬───────────────────┘
-│              │              │
+     │              │              │
 ┌────▼────┐   ┌─────▼────┐  ┌────▼────┐
 │PostgreSQL│   │  Redis   │  │  Kafka  │
 │   DB    │   │  Cache   │  │ Events  │
 └─────────┘   └──────────┘  └─────────┘
-│
-┌─────▼────┐
-│  Celery  │
-│ Workers  │
-└──────────┘
+                    │
+              ┌─────▼────┐
+              │  Celery  │
+              │ Workers  │
+              └──────────┘
+```
 
 ---
 
 ## ⚡ Kafka Event-Driven Architecture
+
+```
 Booking Service ──► booking.created ──► Email Consumer (Celery)
-──► Analytics Consumer
-──► Inventory Consumer
+                                    ──► Analytics Consumer
+                                    ──► Inventory Consumer
+
 Payment Webhook ──► payment.success ──► Booking Status Update
-──► Confirmation Email
+                                    ──► Confirmation Email
+
 User Action ────► booking.cancelled ──► Refund Flow
-──► Inventory Release
+                                    ──► Inventory Release
+```
 
 **Why Kafka?**
 - Decouples booking service from downstream consumers
@@ -123,11 +131,15 @@ User Action ────► booking.cancelled ──► Refund Flow
 ---
 
 ## 📊 Database Schema
+
+```
 City ──────┬──► Hotel
-├──► Adventure
-└──► Vehicle
+           ├──► Adventure  
+           └──► Vehicle
+
 User ──────┬──► Booking ──► BookingItem (price_at_booking snapshot)
-└──► Payment ──► Razorpay Integration
+           └──► Payment ──► Razorpay Integration
+```
 
 ### Key Design Decisions
 - `price_at_booking` — Snapshot price to prevent price drift
@@ -158,30 +170,40 @@ db=2  →  Celery Broker
 ## 🔌 API Endpoints
 
 ### Auth
+```
 POST /api/v1/auth/register/       Register user
 POST /api/v1/auth/verify-otp/     Verify email OTP
 POST /api/v1/auth/resend-otp/     Resend OTP
 POST /api/v1/auth/token/          Login (JWT)
 POST /api/v1/auth/token/refresh/  Refresh token
+```
 
 ### Locations
+```
 GET /api/v1/cities/               List all cities
 GET /api/v1/hotels/?city={id}     Hotels by city
 GET /api/v1/adventures/?city={id} Adventures by city
 GET /api/v1/vehicles/?city={id}   Vehicles by city
+```
 
 ### Bookings
+```
 POST /api/v1/bookings/            Create booking
 GET  /api/v1/bookings/my/         My bookings
 GET  /api/v1/bookings/{id}/       Booking detail
+```
 
 ### Payments
+```
 POST /api/v1/payments/razorpay/create-order/  Create Razorpay order
 POST /api/v1/payments/razorpay/verify/        Verify payment signature
 POST /api/v1/payments/refund/                 Process refund
+```
 
 ### AI Agent
+```
 POST /api/v1/ai/plan/             Conversational trip planner
+```
 
 ---
 
@@ -267,6 +289,8 @@ CELERY_RESULT_BACKEND=redis://redis:6379/2
 ---
 
 ## 📁 Project Structure
+
+```
 travelx/
 ├── apps/
 │   ├── core/           # Base models, utilities
@@ -288,6 +312,7 @@ travelx/
 ├── docker/             # Docker + Nginx config
 ├── tasks/              # Celery tasks
 └── docker-compose.yml
+```
 
 ---
 
@@ -313,7 +338,7 @@ travelx/
 Python Backend Developer | Django | Kafka | Docker | AI
 
 [![GitHub](https://img.shields.io/badge/GitHub-AshishChaubey2003-black?logo=github)](https://github.com/AshishChaubey2003)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?logo=linkedin)](https://linkedin.com/in/your-profile)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?logo=linkedin)](https://linkedin.com/in/ashish-kumar-chaubey)
 
 ---
 
