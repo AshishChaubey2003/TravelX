@@ -41,16 +41,15 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
- 
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -75,12 +74,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 DATABASES = {
     'default': dj_database_url.config(
-        default=config('DATABASE_URL', default='postgresql://travelx_user:travelx_pass@db:5432/travelx_db')
+        default=config('DATABASE_URL', default='postgresql://travelx_user:travelx_pass@db:5432/travelx_db'),
+        conn_max_age=600,
     )
 }
 
-# Redis Cache
-# Redis Cache — falls back to in-memory if Redis is not running locally
+# Redis Cache — falls back to in-memory if Redis is not configured
 if config('USE_REDIS', default=False, cast=bool):
     CACHES = {
         'default': {
@@ -98,10 +97,6 @@ else:
         }
     }
     SESSION_ENGINE = 'django.contrib.sessions.backends.db'
-
-# Session
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'default'
 
 # DRF
 REST_FRAMEWORK = {
@@ -142,9 +137,7 @@ KAFKA_BROKER = config('KAFKA_BROKER', default='kafka:29092')
 RAZORPAY_KEY_ID = config('RAZORPAY_KEY_ID', default='')
 RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET', default='')
 
-
-
-# groq
+# Groq
 GROQ_API_KEY = config('GROQ_API_KEY', default='')
 
 # Email
@@ -172,11 +165,20 @@ USE_TZ = True
 # Static & Media
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-]
+# CORS — allow local + your deployed frontend
+CORS_ALLOWED_ORIGINS = config(
+    'CORS_ALLOWED_ORIGINS',
+    default='http://localhost:3000'
+).split(',')
+
+# Trust the deployed backend host for CSRF (Render)
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS',
+    default='http://localhost:3000'
+).split(',')

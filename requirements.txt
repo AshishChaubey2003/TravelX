@@ -30,9 +30,11 @@ httpx==0.27.0
 # ── Filters & Utils ──────────────────────────
 django-filter==24.2
 Pillow==10.4.0
+requests==2.32.3
 
 # ── Production Server ─────────────────────────
 gunicorn==22.0.0
+whitenoise==6.7.0
 
 # ── Dev & Testing ────────────────────────────
 pytest-django==4.8.0
