@@ -1,6 +1,6 @@
 <div align="center">
 
-# ✈️ TravelX
+# 🏔️ TravelX
 
 ### AI-Powered Travel Booking Platform
 
