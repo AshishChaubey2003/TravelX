@@ -1,14 +1,27 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: "http://localhost:8000/api/v1",
+  baseURL: process.env.REACT_APP_API_URL || "http://localhost:8000/api/v1",
 });
 
+// Attach token to every request (if present)
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem("tx_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
+// If any request returns 401, the token is invalid/expired -> remove it
+// so public endpoints (cities, hotels, adventures, vehicles) work again.
+API.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem("tx_token");
+    }
+    return Promise.reject(error);
+  },
+);
 
 export const getCities = () => API.get("/cities/");
 export const getCity = (id) => API.get(`/cities/${id}/`);

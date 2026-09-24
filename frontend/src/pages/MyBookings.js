@@ -1,14 +1,29 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import axios from "axios";
+import API from "../api";
 import toast from "react-hot-toast";
+
+const BG_IMGS = [
+  "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1600&q=80",
+  "https://images.unsplash.com/photo-1512343879784-a960bf40e7f2?w=1600&q=80",
+  "https://images.unsplash.com/photo-1477587458883-47145ed94245?w=1600&q=80",
+  "https://images.unsplash.com/photo-1626621341517-bbf3d9990a23?w=1600&q=80",
+];
 
 export default function MyBookings() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [bgIndex, setBgIndex] = useState(0);
   const { token } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setBgIndex((i) => (i + 1) % BG_IMGS.length);
+    }, 4000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -20,11 +35,8 @@ export default function MyBookings() {
 
   const loadBookings = async () => {
     try {
-      const { data } = await axios.get(
-        "http://localhost:8000/api/v1/bookings/my/",
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      setBookings(data.results || []);
+      const { data } = await API.get("/bookings/my/");
+      setBookings((data.results || []).filter((b) => b.status !== "CANCELLED"));
     } catch {
       console.error("Failed to load bookings");
     }
@@ -35,11 +47,7 @@ export default function MyBookings() {
     if (!window.confirm("Are you sure you want to cancel and get refund?"))
       return;
     try {
-      await axios.post(
-        "http://localhost:8000/api/v1/payments/refund/",
-        { booking_id: bookingId },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
+      await API.post("/payments/refund/", { booking_id: bookingId });
       toast.success("Refund processed! 💰");
       loadBookings();
     } catch (e) {
@@ -47,9 +55,20 @@ export default function MyBookings() {
     }
   };
 
+  const handleCancel = async (bookingId) => {
+    if (!window.confirm("Cancel this booking? This cannot be undone.")) return;
+    try {
+      await API.post(`/bookings/${bookingId}/cancel/`);
+      toast.success("Booking cancelled");
+      loadBookings();
+    } catch (e) {
+      toast.error(e.response?.data?.error || "Could not cancel booking");
+    }
+  };
+
   const getStatusColor = (status) => {
     const colors = {
-      PENDING: "#F59E0B",
+      PENDING: "#FBBF24",
       CONFIRMED: "#14B8A6",
       PAID: "#10B981",
       CANCELLED: "#EF4444",
@@ -69,9 +88,49 @@ export default function MyBookings() {
 
   return (
     <div
-      style={{ paddingTop: "80px", minHeight: "100vh", background: "#080C14" }}
+      style={{
+        paddingTop: "80px",
+        minHeight: "100vh",
+        background: "#080D17",
+        position: "relative",
+        overflow: "hidden",
+      }}
     >
-      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+      {/* Background slideshow */}
+      <div style={{ position: "fixed", inset: 0, zIndex: 0 }}>
+        {BG_IMGS.map((img, i) => (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              inset: 0,
+              backgroundImage: `url(${img})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              opacity: i === bgIndex ? 0.18 : 0,
+              transition: "opacity 1.5s ease",
+            }}
+          />
+        ))}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background:
+              "linear-gradient(180deg, rgba(8,13,23,0.85) 0%, #080D17 60%)",
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          maxWidth: "900px",
+          margin: "0 auto",
+          padding: "2rem",
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
         {/* Header */}
         <div style={{ marginBottom: "2rem" }}>
           <div
@@ -80,7 +139,7 @@ export default function MyBookings() {
               fontWeight: 600,
               letterSpacing: "2px",
               textTransform: "uppercase",
-              color: "#F97316",
+              color: "#2DD4BF",
               marginBottom: "0.5rem",
             }}
           >
@@ -88,7 +147,7 @@ export default function MyBookings() {
           </div>
           <h1
             style={{
-              fontFamily: "Syne, sans-serif",
+              fontFamily: "system-ui, sans-serif",
               fontSize: "2rem",
               fontWeight: 700,
             }}
@@ -119,7 +178,7 @@ export default function MyBookings() {
                 marginTop: "1rem",
                 padding: "0.75rem 1.5rem",
                 borderRadius: "10px",
-                background: "linear-gradient(135deg, #F97316, #EA580C)",
+                background: "linear-gradient(135deg, #2DD4BF, #14B8A6)",
                 border: "none",
                 color: "white",
                 cursor: "pointer",
@@ -137,7 +196,7 @@ export default function MyBookings() {
               <div
                 key={booking.id}
                 style={{
-                  background: "#141E2E",
+                  background: "#0F1E33",
                   border: `1px solid rgba(255,255,255,0.07)`,
                   borderLeft: `4px solid ${getStatusColor(booking.status)}`,
                   borderRadius: "16px",
@@ -156,7 +215,7 @@ export default function MyBookings() {
                   <div>
                     <div
                       style={{
-                        fontFamily: "Syne, sans-serif",
+                        fontFamily: "system-ui, sans-serif",
                         fontWeight: 700,
                         fontSize: "1rem",
                         marginBottom: "0.25rem",
@@ -238,7 +297,7 @@ export default function MyBookings() {
                       <span
                         style={{
                           fontSize: "0.875rem",
-                          color: "#F97316",
+                          color: "#2DD4BF",
                           fontWeight: 600,
                         }}
                       >
@@ -288,13 +347,37 @@ export default function MyBookings() {
                       </button>
                     )}
                     {booking.status === "PENDING" && (
-                      <span style={{ fontSize: "0.75rem", color: "#F59E0B" }}>
-                        ⏳ Payment pending
-                      </span>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.75rem",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ fontSize: "0.75rem", color: "#FBBF24" }}>
+                          ⏳ Payment pending
+                        </span>
+                        <button
+                          onClick={() => handleCancel(booking.id)}
+                          style={{
+                            padding: "0.35rem 0.9rem",
+                            borderRadius: "50px",
+                            border: "1px solid rgba(239,68,68,0.4)",
+                            background: "transparent",
+                            color: "#EF4444",
+                            fontSize: "0.72rem",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Cancel Booking
+                        </button>
+                      </div>
                     )}
-                    {booking.status === "CANCELLED" && (
-                      <span style={{ fontSize: "0.75rem", color: "#EF4444" }}>
-                        ❌ Booking cancelled
+                    {booking.status === "CONFIRMED" && (
+                      <span style={{ fontSize: "0.75rem", color: "#14B8A6" }}>
+                        ✓ Confirmed
                       </span>
                     )}
                   </div>
@@ -304,7 +387,7 @@ export default function MyBookings() {
                     </div>
                     <div
                       style={{
-                        fontFamily: "Syne, sans-serif",
+                        fontFamily: "system-ui, sans-serif",
                         fontSize: "1.25rem",
                         fontWeight: 700,
                         color: "#10B981",

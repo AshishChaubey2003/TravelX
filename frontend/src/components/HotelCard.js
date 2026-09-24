@@ -1,51 +1,72 @@
 import React from "react";
 
+const HOTEL_IMGS = [
+  "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&q=80",
+  "https://images.unsplash.com/photo-1571896349842-33c89424de2d?w=800&q=80",
+  "https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?w=800&q=80",
+  "https://images.unsplash.com/photo-1618773928121-c32242e63f39?w=800&q=80",
+  "https://images.unsplash.com/photo-1590490360182-c33d57733427?w=800&q=80",
+  "https://images.unsplash.com/photo-1611892440504-42a792e24d32?w=800&q=80",
+];
+function hashCode(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function hotelImage(hotel) {
+  const key = String(hotel.id || hotel.name || "hotel");
+  return HOTEL_IMGS[hashCode(key) % HOTEL_IMGS.length];
+}
+
 export default function HotelCard({ hotel, onBook }) {
   return (
     <div
       style={{
-        background: "#141E2E",
-        border: "1px solid rgba(255,255,255,0.07)",
-        borderRadius: "20px",
+        background: "#0F1E33",
+        border: "1px solid rgba(255,255,255,0.1)",
+        borderRadius: "18px",
         overflow: "hidden",
         transition: "all 0.25s",
         cursor: "pointer",
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.transform = "translateY(-4px)";
-        e.currentTarget.style.boxShadow = "0 25px 50px rgba(0,0,0,0.5)";
+        e.currentTarget.style.transform = "translateY(-6px)";
+        e.currentTarget.style.borderColor = "rgba(45,212,191,0.4)";
+        e.currentTarget.style.boxShadow = "0 22px 44px rgba(0,0,0,0.45)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.transform = "translateY(0)";
+        e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
         e.currentTarget.style.boxShadow = "none";
       }}
     >
       <div
-        style={{
-          height: "160px",
-          background:
-            "linear-gradient(135deg, rgba(249,115,22,0.1), rgba(20,184,166,0.1))",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: "3rem",
-          position: "relative",
-        }}
+        style={{ height: "190px", position: "relative", overflow: "hidden" }}
       >
-        🏨
+        <img
+          src={hotelImage(hotel)}
+          alt={hotel.name}
+          loading="lazy"
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+        />
         <div
           style={{
             position: "absolute",
             top: "0.75rem",
             right: "0.75rem",
-            background: "rgba(8,12,20,0.85)",
-            backdropFilter: "blur(10px)",
+            background: "rgba(10,22,40,0.85)",
+            backdropFilter: "blur(8px)",
             border: "1px solid rgba(255,255,255,0.12)",
-            padding: "0.25rem 0.6rem",
-            borderRadius: "6px",
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            color: "#F59E0B",
+            padding: "0.3rem 0.6rem",
+            borderRadius: "8px",
+            fontSize: "0.8rem",
+            fontWeight: 700,
+            color: "#FBBF24",
           }}
         >
           ⭐ {hotel.rating}
@@ -54,8 +75,9 @@ export default function HotelCard({ hotel, onBook }) {
       <div style={{ padding: "1.25rem" }}>
         <div
           style={{
-            fontFamily: "Syne, sans-serif",
+            fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
             fontWeight: 700,
+            fontSize: "1.05rem",
             marginBottom: "0.25rem",
           }}
         >
@@ -64,7 +86,7 @@ export default function HotelCard({ hotel, onBook }) {
         <div
           style={{
             fontSize: "0.8rem",
-            color: "#64748B",
+            color: "#94A8C0",
             marginBottom: "0.75rem",
           }}
         >
@@ -82,12 +104,12 @@ export default function HotelCard({ hotel, onBook }) {
             <span
               key={a}
               style={{
-                background: "#111827",
-                border: "1px solid rgba(255,255,255,0.07)",
-                padding: "0.2rem 0.5rem",
-                borderRadius: "4px",
+                background: "#16283F",
+                border: "1px solid rgba(255,255,255,0.08)",
+                padding: "0.2rem 0.55rem",
+                borderRadius: "6px",
                 fontSize: "0.7rem",
-                color: "#94A3B8",
+                color: "#94A8C0",
               }}
             >
               {a}
@@ -100,21 +122,20 @@ export default function HotelCard({ hotel, onBook }) {
             justifyContent: "space-between",
             alignItems: "center",
             paddingTop: "0.875rem",
-            borderTop: "1px solid rgba(255,255,255,0.07)",
+            borderTop: "1px solid rgba(255,255,255,0.08)",
           }}
         >
           <div>
             <span
               style={{
-                fontFamily: "Syne, sans-serif",
+                fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
                 fontSize: "1.25rem",
-                fontWeight: 700,
-                color: "#F97316",
+                fontWeight: 800,
               }}
             >
               ₹{Number(hotel.price_per_night).toLocaleString()}
             </span>
-            <span style={{ fontSize: "0.75rem", color: "#64748B" }}>
+            <span style={{ fontSize: "0.75rem", color: "#94A8C0" }}>
               {" "}
               /night
             </span>
@@ -122,13 +143,13 @@ export default function HotelCard({ hotel, onBook }) {
           <button
             onClick={() => onBook(hotel)}
             style={{
-              padding: "0.5rem 1rem",
-              borderRadius: "8px",
+              padding: "0.55rem 1.1rem",
+              borderRadius: "50px",
               border: "none",
-              background: "linear-gradient(135deg, #F97316, #EA580C)",
-              color: "white",
+              background: "#2DD4BF",
+              color: "#0A1628",
               fontSize: "0.8rem",
-              fontWeight: 600,
+              fontWeight: 700,
               cursor: "pointer",
             }}
           >

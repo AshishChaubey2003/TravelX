@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import toast from "react-hot-toast";
 import { login, register } from "../api";
 import { useAuth } from "../context/AuthContext";
-import axios from "axios";
+import API from "../api";
+import Logo from "./Logo";
 
 export default function AuthModal({ tab, onClose }) {
   const [activeTab, setActiveTab] = useState(tab);
@@ -51,7 +52,7 @@ export default function AuthModal({ tab, onClose }) {
   const handleVerifyOTP = async () => {
     setLoading(true);
     try {
-      await axios.post("http://localhost:8000/api/v1/auth/verify-otp/", {
+      await API.post("/auth/verify-otp/", {
         email: registeredEmail,
         otp: otp,
       });
@@ -67,7 +68,7 @@ export default function AuthModal({ tab, onClose }) {
 
   const handleResendOTP = async () => {
     try {
-      await axios.post("http://localhost:8000/api/v1/auth/resend-otp/", {
+      await API.post("/auth/resend-otp/", {
         email: registeredEmail,
       });
       toast.success("New OTP sent! 📧");
@@ -101,12 +102,10 @@ export default function AuthModal({ tab, onClose }) {
     padding: "0.875rem",
     borderRadius: "12px",
     border: "none",
-    background: loading
-      ? "#374151"
-      : "linear-gradient(135deg, #F97316, #EA580C)",
-    color: "white",
+    background: loading ? "#374151" : "#2DD4BF",
+    color: loading ? "white" : "#0A1628",
     fontSize: "1rem",
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: loading ? "not-allowed" : "pointer",
   };
 
@@ -140,12 +139,24 @@ export default function AuthModal({ tab, onClose }) {
           style={{
             display: "flex",
             justifyContent: "space-between",
+            alignItems: "flex-start",
             marginBottom: "1.5rem",
           }}
         >
-          <h2 style={{ fontFamily: "Syne, sans-serif", fontWeight: 700 }}>
-            {step === "otp" ? "Verify Email 📧" : "Welcome to TravelX"}
-          </h2>
+          <div>
+            <div style={{ marginBottom: "0.75rem", display: "inline-flex" }}>
+              <Logo size={18} to={null} />
+            </div>
+            <h2
+              style={{
+                fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
+                fontWeight: 700,
+                fontSize: "1.3rem",
+              }}
+            >
+              {step === "otp" ? "Verify Email 📧" : "Welcome back"}
+            </h2>
+          </div>
           <button
             onClick={onClose}
             style={{
@@ -164,8 +175,8 @@ export default function AuthModal({ tab, onClose }) {
           <>
             <div
               style={{
-                background: "rgba(249,115,22,0.05)",
-                border: "1px solid rgba(249,115,22,0.2)",
+                background: "rgba(45,212,191,0.06)",
+                border: "1px solid rgba(45,212,191,0.25)",
                 borderRadius: "12px",
                 padding: "1rem",
                 marginBottom: "1.5rem",
@@ -175,7 +186,7 @@ export default function AuthModal({ tab, onClose }) {
               <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>📬</div>
               <p style={{ color: "#94A3B8", fontSize: "0.875rem" }}>
                 OTP sent to{" "}
-                <strong style={{ color: "#F97316" }}>{registeredEmail}</strong>
+                <strong style={{ color: "#2DD4BF" }}>{registeredEmail}</strong>
               </p>
               <p
                 style={{
@@ -251,8 +262,8 @@ export default function AuthModal({ tab, onClose }) {
                     borderRadius: "8px",
                     border: "none",
                     cursor: "pointer",
-                    background: activeTab === t ? "#F97316" : "transparent",
-                    color: activeTab === t ? "white" : "#94A3B8",
+                    background: activeTab === t ? "#2DD4BF" : "transparent",
+                    color: activeTab === t ? "#0A1628" : "#94A3B8",
                     fontWeight: 500,
                     fontSize: "0.875rem",
                     textTransform: "capitalize",

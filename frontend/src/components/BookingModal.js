@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import toast from "react-hot-toast";
-import axios from "axios";
-import { createBooking } from "../api";
+import API, { createBooking } from "../api";
 import { useAuth } from "../context/AuthContext";
 
 export default function BookingModal({ type, item, onClose }) {
@@ -48,10 +47,9 @@ export default function BookingModal({ type, item, onClose }) {
       toast.success("Booking created! Opening payment...");
 
       // Step 2 — Razorpay order create karo
-      const { data: order } = await axios.post(
-        "http://localhost:8000/api/v1/payments/razorpay/create-order/",
+      const { data: order } = await API.post(
+        "/payments/razorpay/create-order/",
         { booking_id: booking.id },
-        { headers: { Authorization: `Bearer ${token}` } },
       );
 
       // Step 3 — Razorpay checkout open karo
@@ -66,20 +64,16 @@ export default function BookingModal({ type, item, onClose }) {
           email: order.user_email,
           name: order.user_name,
         },
-        theme: { color: "#F97316" },
+        theme: { color: "#2DD4BF" },
         handler: async (response) => {
           // Step 4 — Payment verify karo
           try {
-            const { data } = await axios.post(
-              "http://localhost:8000/api/v1/payments/razorpay/verify/",
-              {
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-                booking_id: booking.id,
-              },
-              { headers: { Authorization: `Bearer ${token}` } },
-            );
+            const { data } = await API.post("/payments/razorpay/verify/", {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              booking_id: booking.id,
+            });
             if (data.success) {
               toast.success("Payment successful! 🎉");
               onClose();
@@ -107,7 +101,7 @@ export default function BookingModal({ type, item, onClose }) {
 
   const inputStyle = {
     width: "100%",
-    background: "#111827",
+    background: "#16283F",
     border: "1px solid rgba(255,255,255,0.12)",
     borderRadius: "10px",
     padding: "0.75rem 1rem",
@@ -143,7 +137,7 @@ export default function BookingModal({ type, item, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: "#141E2E",
+          background: "#0F1E33",
           border: "1px solid rgba(255,255,255,0.12)",
           borderRadius: "20px",
           padding: "2rem",
@@ -173,7 +167,7 @@ export default function BookingModal({ type, item, onClose }) {
           <button
             onClick={onClose}
             style={{
-              background: "#111827",
+              background: "#16283F",
               border: "1px solid rgba(255,255,255,0.12)",
               color: "#94A3B8",
               width: "32px",
@@ -190,7 +184,7 @@ export default function BookingModal({ type, item, onClose }) {
         {/* Summary */}
         <div
           style={{
-            background: "#111827",
+            background: "#16283F",
             border: "1px solid rgba(255,255,255,0.07)",
             borderRadius: "12px",
             padding: "1rem",
@@ -222,7 +216,7 @@ export default function BookingModal({ type, item, onClose }) {
               justifyContent: "space-between",
               fontSize: "1rem",
               fontWeight: 700,
-              color: "#F97316",
+              color: "#2DD4BF",
               borderTop: "1px solid rgba(255,255,255,0.07)",
               paddingTop: "0.75rem",
               marginTop: "0.5rem",
@@ -321,10 +315,10 @@ export default function BookingModal({ type, item, onClose }) {
             border: "none",
             background: loading
               ? "#374151"
-              : "linear-gradient(135deg, #F97316, #EA580C)",
-            color: "white",
+              : "linear-gradient(135deg, #2DD4BF, #14B8A6)",
+            color: loading ? "white" : "#0A1628",
             fontSize: "1rem",
-            fontWeight: 600,
+            fontWeight: 700,
             cursor: loading ? "not-allowed" : "pointer",
           }}
         >

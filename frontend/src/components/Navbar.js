@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import AuthModal from "./AuthModal";
+import Logo from "./Logo";
 
 export default function Navbar() {
   const { token, doLogout } = useAuth();
@@ -11,6 +12,14 @@ export default function Navbar() {
   const openAuth = (tab) => {
     setAuthTab(tab);
     setShowAuth(true);
+  };
+
+  const linkStyle = {
+    color: "#94A8C0",
+    textDecoration: "none",
+    fontSize: "0.95rem",
+    fontWeight: 500,
+    transition: "color 0.2s",
   };
 
   return (
@@ -25,85 +34,47 @@ export default function Navbar() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "1rem 2rem",
-          background: "rgba(8,12,20,0.85)",
-          backdropFilter: "blur(20px)",
-          borderBottom: "1px solid rgba(255,255,255,0.07)",
+          padding: "1rem 2.5rem",
+          background: "rgba(10,22,40,0.72)",
+          backdropFilter: "blur(16px)",
+          borderBottom: "1px solid rgba(255,255,255,0.1)",
         }}
       >
-        <Link
-          to="/"
-          style={{
-            fontFamily: "Syne, sans-serif",
-            fontSize: "1.4rem",
-            fontWeight: 800,
-            background: "linear-gradient(135deg, #F97316, #F59E0B)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            textDecoration: "none",
-          }}
-        >
-          ✈ TravelX
-        </Link>
+        {/* Logo */}
+        <Logo />
 
-        <div style={{ display: "flex", gap: "2rem" }}>
-          <Link
-            to="/"
-            style={{
-              color: "#94A3B8",
-              textDecoration: "none",
-              fontSize: "0.9rem",
-            }}
-          >
+        {/* Links */}
+        <div style={{ display: "flex", gap: "2rem", alignItems: "center" }}>
+          <Link to="/" style={linkStyle}>
             Home
           </Link>
-          <Link
-            to="/explore"
-            style={{
-              color: "#94A3B8",
-              textDecoration: "none",
-              fontSize: "0.9rem",
-            }}
-          >
+          <Link to="/explore" style={linkStyle}>
             Explore
           </Link>
-          <a
-            href="#ai"
-            style={{
-              color: "#94A3B8",
-              textDecoration: "none",
-              fontSize: "0.9rem",
-            }}
-          >
-            AI Planner
-          </a>
           {token && (
             <Link
               to="/my-bookings"
-              style={{
-                color: "#F97316",
-                textDecoration: "none",
-                fontSize: "0.9rem",
-                fontWeight: 600,
-              }}
+              style={{ ...linkStyle, color: "#F1F6FB", fontWeight: 600 }}
             >
-              📋 My Bookings
+              My Bookings
             </Link>
           )}
         </div>
 
+        {/* Auth buttons */}
         <div style={{ display: "flex", gap: "0.75rem" }}>
           {token ? (
             <button
               onClick={doLogout}
               style={{
-                padding: "0.5rem 1.2rem",
-                borderRadius: "8px",
+                padding: "0.55rem 1.3rem",
+                borderRadius: "50px",
                 background: "transparent",
-                border: "1px solid rgba(255,255,255,0.12)",
-                color: "#94A3B8",
+                border: "1px solid rgba(255,255,255,0.15)",
+                color: "#F1F6FB",
                 cursor: "pointer",
                 fontSize: "0.875rem",
+                fontWeight: 600,
               }}
             >
               Logout
@@ -113,13 +84,14 @@ export default function Navbar() {
               <button
                 onClick={() => openAuth("login")}
                 style={{
-                  padding: "0.5rem 1.2rem",
-                  borderRadius: "8px",
+                  padding: "0.55rem 1.3rem",
+                  borderRadius: "50px",
                   background: "transparent",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  color: "#94A3B8",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  color: "#F1F6FB",
                   cursor: "pointer",
                   fontSize: "0.875rem",
+                  fontWeight: 600,
                 }}
               >
                 Login
@@ -127,13 +99,14 @@ export default function Navbar() {
               <button
                 onClick={() => openAuth("register")}
                 style={{
-                  padding: "0.5rem 1.2rem",
-                  borderRadius: "8px",
-                  background: "linear-gradient(135deg, #F97316, #EA580C)",
+                  padding: "0.55rem 1.4rem",
+                  borderRadius: "50px",
+                  background: "#2DD4BF",
                   border: "none",
-                  color: "white",
+                  color: "#0A1628",
                   cursor: "pointer",
                   fontSize: "0.875rem",
+                  fontWeight: 700,
                 }}
               >
                 Sign Up

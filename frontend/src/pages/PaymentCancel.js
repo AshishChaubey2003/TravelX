@@ -11,7 +11,7 @@ export default function PaymentCancel() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#080C14",
+        background: "#080D17",
         flexDirection: "column",
       }}
     >
@@ -19,28 +19,28 @@ export default function PaymentCancel() {
         <div style={{ fontSize: "5rem", marginBottom: "1rem" }}>😔</div>
         <h1
           style={{
-            fontFamily: "Syne, sans-serif",
+            fontFamily: "'Plus Jakarta Sans', Syne, sans-serif",
             fontSize: "2rem",
-            fontWeight: 700,
+            fontWeight: 800,
             color: "#EF4444",
             marginBottom: "1rem",
           }}
         >
           Payment Cancelled
         </h1>
-        <p style={{ color: "#94A3B8", fontSize: "1rem", marginBottom: "2rem" }}>
+        <p style={{ color: "#94A8C0", fontSize: "1rem", marginBottom: "2rem" }}>
           Your booking was not completed. Please try again!
         </p>
         <button
           onClick={() => navigate("/")}
           style={{
             padding: "0.875rem 2rem",
-            borderRadius: "12px",
+            borderRadius: "50px",
             border: "none",
-            background: "linear-gradient(135deg, #F97316, #EA580C)",
-            color: "white",
+            background: "#2DD4BF",
+            color: "#0A1628",
             fontSize: "1rem",
-            fontWeight: 600,
+            fontWeight: 700,
             cursor: "pointer",
           }}
         >
