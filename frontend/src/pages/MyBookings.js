@@ -31,7 +31,7 @@ export default function MyBookings() {
       return;
     }
     loadBookings();
-  }, [token]);
+  }, [token, navigate]);
 
   const loadBookings = async () => {
     try {

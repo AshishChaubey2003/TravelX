@@ -2,6 +2,7 @@ import json
 import logging
 from confluent_kafka import Producer
 from django.conf import settings
+from .schemas import EventValidationError, prepare_event
 from .topics import (
     TOPIC_BOOKING_CREATED,
     TOPIC_PAYMENT_SUCCESS,
@@ -33,22 +34,43 @@ def delivery_report(err, msg):
 
 
 def publish_event(topic: str, payload: dict):
+    # G06: stamp schema_version and validate before publishing. An invalid
+    # event is logged and NOT published (same "log, don't raise" policy as
+    # Kafka failures below).
+    try:
+        event = prepare_event(topic, payload)
+    except EventValidationError as e:
+        logger.error(f'Refusing to publish invalid {topic} event: {e}')
+        return
+
     try:
         producer = get_producer()
         producer.produce(
             topic=topic,
-            key=str(payload.get('booking_id', 'unknown')).encode(),
-            value=json.dumps(payload).encode(),
+            key=str(event.get('booking_id', 'unknown')).encode(),
+            value=json.dumps(event).encode(),
             callback=delivery_report,
         )
         producer.poll(0)  # non-blocking
-        logger.info(f'Event published to {topic}: {payload}')
+        logger.info(f'Event published to {topic}: {event}')
     except Exception as e:
         logger.error(f'Kafka publish failed: {e}')
 
 
 def publish_booking_created(booking):
-    publish_event(TOPIC_BOOKING_CREATED, {
+    """
+    G08: does NOT talk to Kafka. Writes the booking.created event to the
+    transactional outbox, so it must be called inside the same database
+    transaction that creates the booking. The relay
+    (manage.py publish_outbox) delivers it to Kafka. Exceptions are NOT
+    swallowed: if the event cannot be recorded, the booking must not commit
+    without it.
+
+    (The name is kept for backwards compatibility with existing callers and
+    tests; it may be renamed in a later cleanup.)
+    """
+    from .outbox import enqueue_event
+    enqueue_event(TOPIC_BOOKING_CREATED, {
         'booking_id': str(booking.id),
         'user_id': str(booking.user.id),
         'user_email': booking.user.email,

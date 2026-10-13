@@ -1,7 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
-import random
-import string
+import secrets
 from django.utils import timezone
 from datetime import timedelta
 
@@ -14,7 +13,7 @@ class EmailVerification(models.Model):
     expires_at = models.DateTimeField(default=timezone.now)  # ← fix
 
     def generate_otp(self):
-        self.otp = ''.join(random.choices(string.digits, k=6))
+        self.otp = f'{secrets.randbelow(10 ** 6):06d}'
         self.expires_at = timezone.now() + timedelta(minutes=10)
         self.save()
         return self.otp

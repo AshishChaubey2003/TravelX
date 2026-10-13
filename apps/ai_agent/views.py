@@ -1,12 +1,19 @@
+import logging
+
 from groq import Groq
 from django.conf import settings
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import ScopedRateThrottle
 from apps.locations.models import City
 from apps.hotels.models import Hotel
 from apps.adventures.models import Adventure
 from apps.vehicles.models import Vehicle
+from .serializers import PlanTripRequestSerializer
+
+logger = logging.getLogger('travelx.request')
 
 client = Groq(api_key=settings.GROQ_API_KEY)
 
@@ -46,13 +53,14 @@ def get_vehicles(city_id):
 class PlanTripView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ai_plan_trip'
 
     def post(self, request):
-        query = request.data.get('query', '')
-        session = request.data.get('session', {})
-
-        if not query:
-            return Response({'error': 'Query required'}, status=400)
+        serializer = PlanTripRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        query = serializer.validated_data['query']
+        session = serializer.validated_data.get('session') or {}
 
         try:
             cities = get_cities()
@@ -146,12 +154,15 @@ class PlanTripView(APIView):
                     'type': 'options'
                 })
 
-        except Exception as e:
-            return Response({
-                'response': f'AI error: {str(e)}',
-                'session': {'step': 'initial'},
-                'type': 'text'
-            }, status=200)
+        except Exception:
+            logger.exception(
+                "PlanTripView: unexpected error while planning a trip (step=%s)",
+                session.get('step', 'initial'),
+            )
+            return Response(
+                {'error': 'Something went wrong while planning your trip. Please try again.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 def generate_final_plan(session, city):

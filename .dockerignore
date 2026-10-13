@@ -1,0 +1,17 @@
+.git
+.gitignore
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example

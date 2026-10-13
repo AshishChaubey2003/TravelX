@@ -2,12 +2,21 @@ from pathlib import Path
 import os
 import dj_database_url
 from decouple import config
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-travelx-dev-key-change-in-production')
+DEBUG = config('DEBUG', default=False, cast=bool)
 
-DEBUG = config('DEBUG', default=True, cast=bool)
+# --- F-22 Phase 1.1: fail fast in production if SECRET_KEY is not supplied. ---
+# Local dev keeps the existing insecure fallback (DEBUG=True only).
+_SECRET_KEY_ENV = config('SECRET_KEY', default=None)
+if not DEBUG and not _SECRET_KEY_ENV:
+    raise ImproperlyConfigured(
+        "SECRET_KEY environment variable is required when DEBUG=False (production). "
+        "Set it in the environment before starting the app."
+    )
+SECRET_KEY = _SECRET_KEY_ENV or 'django-insecure-travelx-dev-key-change-in-production'
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,0.0.0.0,web').split(',')
 
@@ -41,6 +50,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'apps.core.middleware.RequestIDMiddleware',        # H01
+    'apps.core.metrics_middleware.MetricsMiddleware',  # H05
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -71,10 +82,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database
+# --- F-22 Phase 1.2: fail fast in production if DATABASE_URL is not supplied. ---
+# Local dev / existing SQLite workflow is preserved (DEBUG=True only).
+_DATABASE_URL_ENV = config('DATABASE_URL', default=None)
+if not DEBUG and not _DATABASE_URL_ENV:
+    raise ImproperlyConfigured(
+        "DATABASE_URL environment variable is required when DEBUG=False (production)."
+    )
 DATABASES = {
     'default': dj_database_url.config(
-        default=config('DATABASE_URL', default='postgresql://travelx_user:travelx_pass@db:5432/travelx_db'),
+        default=_DATABASE_URL_ENV or 'postgresql://travelx_user:travelx_pass@db:5432/travelx_db',
         conn_max_age=600,
     )
 }
@@ -113,6 +130,14 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # F-22 Phase 2/3: scoped throttles. These do NOT apply globally -
+    # only a view that explicitly sets throttle_scope to one of these keys
+    # is affected. No other endpoint's behavior changes.
+    'DEFAULT_THROTTLE_RATES': {
+        'ai_plan_trip': config('AI_PLAN_TRIP_THROTTLE_RATE', default='10/min'),
+        'otp_verify': config('OTP_VERIFY_THROTTLE_RATE', default='5/min'),
+        'otp_resend': config('OTP_RESEND_THROTTLE_RATE', default='3/min'),
+    },
 }
 
 # JWT
@@ -136,17 +161,34 @@ KAFKA_BROKER = config('KAFKA_BROKER', default='kafka:29092')
 # Razorpay
 RAZORPAY_KEY_ID = config('RAZORPAY_KEY_ID', default='')
 RAZORPAY_KEY_SECRET = config('RAZORPAY_KEY_SECRET', default='')
+RAZORPAY_WEBHOOK_SECRET = config('RAZORPAY_WEBHOOK_SECRET', default='')
 
 # Groq
 GROQ_API_KEY = config('GROQ_API_KEY', default='')
 
 # Email
 EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+
+# Make the console email backend resilient to characters the terminal can't
+# display (e.g. emoji on a Windows cp1252 console). This only changes how
+# such characters are shown in console output; it does not alter the
+# EMAIL_BACKEND choice, the email content sent via send_mail(), or anything
+# about production SMTP delivery. stdout is what Django's console backend
+# writes to; stderr is included because the dev server's own log output
+# shares the same console and should not crash either.
+if EMAIL_BACKEND == 'django.core.mail.backends.console.EmailBackend':
+    import sys
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors='backslashreplace')
+        except (AttributeError, ValueError):
+            pass
 EMAIL_HOST = config('EMAIL_HOST', default='smtp.mailtrap.io')
 EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 EMAIL_USE_TLS = True
+EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=10, cast=int)
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@travelx.com')
 
 # Password validation
@@ -182,3 +224,107 @@ CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
     default='http://localhost:3000'
 ).split(',')
+
+# ---------------------------------------------------------------------------
+# Logging (H01): structured logs + request correlation IDs
+# LOG_FORMAT=json (default, for containers/prod) or plain (readable in dev)
+# ---------------------------------------------------------------------------
+LOG_LEVEL = config('LOG_LEVEL', default='INFO').upper()
+LOG_FORMAT = config('LOG_FORMAT', default='json').lower()
+if LOG_FORMAT not in ('json', 'plain'):
+    LOG_FORMAT = 'json'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'filters': {
+        'request_id': {'()': 'apps.core.logging_utils.RequestIDFilter'},
+    },
+    'formatters': {
+        'json': {'()': 'apps.core.logging_utils.JsonFormatter'},
+        'plain': {
+            'format': '%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': LOG_FORMAT,
+            'filters': ['request_id'],
+        },
+    },
+    'root': {'handlers': ['console'], 'level': LOG_LEVEL},
+    'loggers': {
+        # Override Django's defaults so lines are not duplicated / unstructured.
+        'django': {'handlers': ['console'], 'level': LOG_LEVEL, 'propagate': False},
+        # Our own per-request line.
+        'travelx.request': {'handlers': ['console'], 'level': LOG_LEVEL, 'propagate': False},
+    },
+}
+
+# Keep Celery from replacing the root logger config above.
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+
+# ---------------------------------------------------------------------------
+# Health checks (H02)
+# Comma-separated subset of: database, cache, broker, kafka
+# ---------------------------------------------------------------------------
+from decouple import Csv  # noqa: E402
+
+HEALTH_READINESS_CHECKS = config(
+    'HEALTH_READINESS_CHECKS', default='database,cache', cast=Csv()
+)
+
+# ---------------------------------------------------------------------------
+# Dependency monitoring (H04)
+# ---------------------------------------------------------------------------
+# Token for GET /health/dependencies/ (header X-Monitoring-Token).
+# Empty = endpoint disabled (404). Keep the real value in the ignored .env.
+MONITORING_TOKEN = config('MONITORING_TOKEN', default='')
+
+MONITOR_INTERVAL_SECONDS = config('MONITOR_INTERVAL_SECONDS', default=60, cast=int)
+MONITOR_OUTBOX_MAX_PENDING = config('MONITOR_OUTBOX_MAX_PENDING', default=100, cast=int)
+MONITOR_OUTBOX_MAX_AGE_SECONDS = config('MONITOR_OUTBOX_MAX_AGE_SECONDS', default=300, cast=int)
+MONITOR_DEAD_LETTER_MAX = config('MONITOR_DEAD_LETTER_MAX', default=0, cast=int)
+
+# Picked up by Celery beat (config_from_object, namespace CELERY).
+# If you already define CELERY_BEAT_SCHEDULE, merge this entry into it.
+CELERY_BEAT_SCHEDULE = {
+    'monitor-dependencies': {
+        'task': 'apps.core.tasks.monitor_dependencies',
+        'schedule': MONITOR_INTERVAL_SECONDS,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Application metrics (H05)
+# ---------------------------------------------------------------------------
+# Bearer token for GET /metrics. Empty = endpoint disabled (404).
+# Keep the real value in the ignored .env, never in source.
+METRICS_TOKEN = config('METRICS_TOKEN', default='')
+
+# ---------------------------------------------------------------------------
+# Booking / payment flow health (H06)
+# ---------------------------------------------------------------------------
+# A PENDING booking/payment older than this is counted as "stale".
+FLOW_PENDING_STALE_MINUTES = config('FLOW_PENDING_STALE_MINUTES', default=30, cast=int)
+# H04 reports "degraded" when stale pending bookings (or payments) exceed this.
+# Abandoned checkouts are normal, so this is a volume limit, not zero.
+FLOW_MAX_STALE_PENDING = config('FLOW_MAX_STALE_PENDING', default=50, cast=int)
+# Booking/payment inconsistencies tolerated (money and status disagree). Keep 0.
+FLOW_MAX_INCONSISTENT = config('FLOW_MAX_INCONSISTENT', default=0, cast=int)
+
+# -- H03: error tracking (Sentry). Disabled unless SENTRY_DSN is set. --
+SENTRY_DSN = config('SENTRY_DSN', default='')
+SENTRY_ENVIRONMENT = config('SENTRY_ENVIRONMENT', default='development')
+SENTRY_RELEASE = config('SENTRY_RELEASE', default='') or None
+SENTRY_TRACES_SAMPLE_RATE = config('SENTRY_TRACES_SAMPLE_RATE', default=0.0, cast=float)
+
+if SENTRY_DSN:
+    from apps.core.error_tracking import init_sentry
+    init_sentry(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        release=SENTRY_RELEASE,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+    )

@@ -22,5 +22,12 @@ class BookingCreateSerializer(serializers.Serializer):
     vehicle_id = serializers.UUIDField(required=False)
     check_in = serializers.DateField()
     check_out = serializers.DateField()
-    nights = serializers.IntegerField(default=1)
-    spots = serializers.IntegerField(default=1)
+    nights = serializers.IntegerField(default=1, min_value=1)
+    spots = serializers.IntegerField(default=1, min_value=1)
+
+    def validate(self, data):
+        if data['check_out'] <= data['check_in']:
+            raise serializers.ValidationError(
+                {'check_out': 'check_out must be later than check_in.'}
+            )
+        return data
