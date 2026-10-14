@@ -65,7 +65,13 @@ class EventKeyTests(TestCase):
         msg = _message(TOPIC_PAYMENT_FAILED, b"", partition=3, offset=99)
         key = build_event_key(TOPIC_PAYMENT_FAILED, {"event_id": event_id}, msg)
         self.assertEqual(key, f"{TOPIC_PAYMENT_FAILED}:event:{event_id}")
-        self.assertNotIn("99", key)
+        # Flake fix (approved M12): previously `assertNotIn("99", key)` —
+        # intended to prove the kafka partition/offset fallback (offset=99)
+        # did not leak into the key, but ~8.4% of random UUIDs contain the
+        # substring "99", so the test failed on correct behaviour. Assert
+        # the absence of the fallback FORMAT instead, which is immune to
+        # UUID content. The assertEqual above already pins the exact key.
+        self.assertNotIn(":kafka:", key)
 
     def test_key_falls_back_to_partition_and_offset_for_legacy_events(self):
         msg = _message(TOPIC_PAYMENT_FAILED, b"", partition=3, offset=99)

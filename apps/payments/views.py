@@ -136,13 +136,30 @@ class VerifyRazorpayPaymentView(APIView):
                     # G08: written to the transactional outbox inside this same
                     # transaction. If it raises, the payment transition rolls
                     # back rather than committing without its event.
-                    enqueue_event(TOPIC_PAYMENT_SUCCESS, {
+                    outbox_event = enqueue_event(TOPIC_PAYMENT_SUCCESS, {
                         'booking_id': str(booking.id),
                         'user_id': str(booking.user.id),
                         'user_email': booking.user.email,
                         'amount': str(payment.amount),
                         'stripe_session_id': payment.stripe_session_id,
                     })
+
+                    # DEMO_INLINE_CONSUMER: no Kafka relay runs in demo mode, so
+                    # drive this event through the SAME consumer handler after
+                    # the transaction commits. By then the booking is already
+                    # PAID (set directly below, in this transaction), so
+                    # handle_payment_success no-ops the status transition and
+                    # only queues the receipt email via eager Celery. If the
+                    # booking is NOT payable (e.g. cancelled), its can_transition
+                    # gate refuses to mark it PAID — the G11/M16 guarantee is
+                    # unchanged. The ProcessedEvent ledger dedupes this against
+                    # any later Kafka delivery of the same event_id.
+                    if getattr(settings, 'DEMO_INLINE_CONSUMER', False):
+                        from apps.kafka_events.consumers import run_inline
+                        _evt = outbox_event
+                        transaction.on_commit(
+                            lambda: run_inline(TOPIC_PAYMENT_SUCCESS, _evt)
+                        )
 
                 if booking_payable and booking.status != 'PAID':
                     booking.status = 'PAID'

@@ -2,13 +2,13 @@ from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from django.db import IntegrityError, transaction, models
+from django.db import IntegrityError, transaction
 from .models import Booking
 from .serializers import BookingSerializer, BookingCreateSerializer
 from .services import BookingService
 from .idempotency import REPLAY_HEADER, booking_fingerprint, read_idempotency_key
 
-# Models for restoring availability on cancel
+# Still needed by BookingCreateView to disambiguate 404 on resource not found.
 from apps.hotels.models import Hotel
 from apps.adventures.models import Adventure
 from apps.vehicles.models import Vehicle
@@ -183,20 +183,15 @@ class BookingCancelView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-                # restore availability for each item
-                for item in booking.items.all():
-                    if item.item_type == 'HOTEL':
-                        Hotel.objects.filter(id=item.item_id).update(
-                            available_rooms=models.F('available_rooms') + item.quantity
-                        )
-                    elif item.item_type == 'ADVENTURE':
-                        Adventure.objects.filter(id=item.item_id).update(
-                            current_bookings=models.F('current_bookings') - item.quantity
-                        )
-                    elif item.item_type == 'VEHICLE':
-                        Vehicle.objects.filter(id=item.item_id).update(
-                            is_available=True
-                        )
+                # F-016: delegate inventory restoration to the single
+                # authoritative implementation in BookingService. The caller
+                # (this block) already satisfies release_inventory's two
+                # preconditions — the booking row is locked via
+                # select_for_update above, and the release happens in the
+                # same transaction as the status change to CANCELLED, so a
+                # second release can never free a vehicle that another
+                # booking has since taken.
+                BookingService.release_inventory(booking)
 
                 booking.status = 'CANCELLED'
                 booking.save(update_fields=['status'])

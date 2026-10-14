@@ -10,6 +10,14 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 
 # --- F-22 Phase 1.1: fail fast in production if SECRET_KEY is not supplied. ---
 # Local dev keeps the existing insecure fallback (DEBUG=True only).
+#
+# The literal string below is used ONLY when DEBUG=True (local development),
+# and ONLY if the SECRET_KEY env var is not set. It MUST NEVER be the key
+# used in production — the check above raises ImproperlyConfigured if someone
+# tries to run with DEBUG=False and no SECRET_KEY env var, so the insecure
+# key cannot leak into a real deploy. Set SECRET_KEY in your .env (see
+# .env.example) to override it even in dev. See audit docs/audit/FINDINGS.md
+# F-R1 for the reasoning behind keeping the fallback for DX.
 _SECRET_KEY_ENV = config('SECRET_KEY', default=None)
 if not DEBUG and not _SECRET_KEY_ENV:
     raise ImproperlyConfigured(
@@ -137,6 +145,12 @@ REST_FRAMEWORK = {
         'ai_plan_trip': config('AI_PLAN_TRIP_THROTTLE_RATE', default='10/min'),
         'otp_verify': config('OTP_VERIFY_THROTTLE_RATE', default='5/min'),
         'otp_resend': config('OTP_RESEND_THROTTLE_RATE', default='3/min'),
+        # F-001: login throttles. `login` is IP-keyed (ScopedRateThrottle
+        # default), `login_account` is username-keyed (apps/accounts/throttles.py
+        # LoginAccountThrottle). Both must pass. Numbers are conservative so a
+        # genuine user who typos a few times is not locked out.
+        'login': config('LOGIN_THROTTLE_RATE', default='20/min'),
+        'login_account': config('LOGIN_ACCOUNT_THROTTLE_RATE', default='10/5min'),
     },
 }
 
@@ -191,6 +205,18 @@ EMAIL_USE_TLS = True
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=10, cast=int)
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@travelx.com')
 
+# F-010 Decision A: PBKDF2 stays the PREFERRED hasher for user passwords —
+# their behaviour does not change at all (existing hashes verify as before
+# and are NOT re-hashed on login). Argon2 is listed SECOND purely so
+# make_password(..., hasher='argon2') can resolve it for OTP hashing
+# (apps/accounts/models.py). Moving Argon2 first (Decision B — re-hashes
+# every user's password on next login, adds argon2 to the auth hot path) is
+# explicitly out of scope and needs its own approval.
+PASSWORD_HASHERS = [
+    'django.contrib.auth.hashers.PBKDF2PasswordHasher',
+    'django.contrib.auth.hashers.Argon2PasswordHasher',
+]
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -207,9 +233,43 @@ USE_TZ = True
 # Static & Media
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# F-015: STATICFILES_STORAGE is deprecated in Django 5.1+. The STORAGES dict
+# below replaces it with the same whitenoise backend (byte-identical behaviour)
+# and silences the RemovedInDjango51Warning that was polluting test output.
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# ---------------------------------------------------------------------------
+# F-002: production security hardening. Only applied when DEBUG=False, so dev
+# is untouched. Every setting reads from env with a conservative default:
+#   - SECURE_SSL_REDIRECT defaults OFF — turning it on without a correct
+#     reverse-proxy header causes redirect loops, so operators opt in only
+#     once their load balancer is confirmed to forward X-Forwarded-Proto.
+#   - SECURE_PROXY_SSL_HEADER is only honoured when TRUST_FORWARDED_PROTO=True.
+#     If no trusted proxy sits in front of Django, do NOT turn this on, or
+#     an attacker could spoof the header and bypass redirect-to-HTTPS.
+#   - Cookies are marked Secure by default: safe because they only matter
+#     over an HTTPS connection anyway.
+#   - HSTS defaults to 0 seconds (OFF). Enable only after a successful HTTPS
+#     deploy on a domain you intend to keep on HTTPS forever.
+# ---------------------------------------------------------------------------
+if not DEBUG:
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+    if config('TRUST_FORWARDED_PROTO', default=False, cast=bool):
+        SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=True, cast=bool)
+    CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=True, cast=bool)
+    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0, cast=int)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False, cast=bool)
+    SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=False, cast=bool)
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = 'same-origin'
+    SESSION_COOKIE_SAMESITE = config('SESSION_COOKIE_SAMESITE', default='Lax')
+    CSRF_COOKIE_SAMESITE = config('CSRF_COOKIE_SAMESITE', default='Lax')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -308,6 +368,17 @@ METRICS_TOKEN = config('METRICS_TOKEN', default='')
 # ---------------------------------------------------------------------------
 # A PENDING booking/payment older than this is counted as "stale".
 FLOW_PENDING_STALE_MINUTES = config('FLOW_PENDING_STALE_MINUTES', default=30, cast=int)
+
+# F-005: a PENDING booking older than this with NO Payment row is expired by
+# the (dormant, manually-invoked) sweep in apps/bookings/tasks_expiry.py.
+# The sweep has NO beat schedule entry; enabling it is a separate approval.
+BOOKING_PENDING_EXPIRY_MINUTES = config('BOOKING_PENDING_EXPIRY_MINUTES', default=30, cast=int)
+
+# F-008: an outbox row stuck IN_FLIGHT longer than this is returned to
+# PENDING (lease cleared) by outbox.rescue_stale_inflight_events — a manual/
+# unscheduled watchdog. Must comfortably exceed the relay's flush timeout
+# (10s) + the producer's message.timeout.ms (5s); 60s gives 4x headroom.
+OUTBOX_INFLIGHT_RESCUE_SECONDS = config('OUTBOX_INFLIGHT_RESCUE_SECONDS', default=60, cast=int)
 # H04 reports "degraded" when stale pending bookings (or payments) exceed this.
 # Abandoned checkouts are normal, so this is a volume limit, not zero.
 FLOW_MAX_STALE_PENDING = config('FLOW_MAX_STALE_PENDING', default=50, cast=int)
@@ -328,3 +399,31 @@ if SENTRY_DSN:
         release=SENTRY_RELEASE,
         traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
     )
+
+# ---------------------------------------------------------------------------
+# Demo-mode inline consumer (DEMO_INLINE_CONSUMER)
+# ---------------------------------------------------------------------------
+# When True, booking and payment events are processed synchronously via
+# transaction.on_commit() instead of requiring Kafka + a background consumer.
+# This enables a zero-dependency demo on Render (no Kafka, no Redis, no
+# workers). Default: False — production uses the full Kafka pipeline.
+#
+# How it works:
+#   After the transaction that writes an outbox event commits, an on_commit
+#   callback calls process_event_once() with the same event_id that the
+#   outbox row carries. If (and when) a real Kafka consumer processes the
+#   same event later, the ProcessedEvent ledger deduplicates it.
+#
+# If the inline call fails, the primary state (Payment, Booking, outbox row)
+# is already committed. The booking status transition is deferred — equivalent
+# to Kafka consumer lag in the full stack. The outbox row remains for manual
+# replay (manage.py recovery replay-events --all).
+#
+# Celery eager mode: with no Redis broker, .delay() executes synchronously.
+# CELERY_TASK_EAGER_PROPAGATES=False ensures that an email-sending failure
+# does not crash the inline path or the webhook response.
+DEMO_INLINE_CONSUMER = config('DEMO_INLINE_CONSUMER', default=False, cast=bool)
+
+if DEMO_INLINE_CONSUMER:
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = False

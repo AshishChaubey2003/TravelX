@@ -68,8 +68,17 @@ class BusinessCollector:
             .values_list("status")
             .annotate(n=Count("id"))
         )
+        # F-008: IN_FLIGHT (reserved-but-unconfirmed) rows are folded into the
+        # "pending" gauge so a stuck row raises the metric instead of
+        # disappearing from it. Normally this adds ~0 (a row is IN_FLIGHT only
+        # for the duration of one produce+flush).
+        outbox[OutboxEvent.STATUS_PENDING] = (
+            outbox.get(OutboxEvent.STATUS_PENDING, 0)
+            + OutboxEvent.objects.filter(
+                status=OutboxEvent.STATUS_IN_FLIGHT).count()
+        )
         oldest = OutboxEvent.objects.filter(
-            status=OutboxEvent.STATUS_PENDING
+            status__in=[OutboxEvent.STATUS_PENDING, OutboxEvent.STATUS_IN_FLIGHT]
         ).aggregate(oldest=Min("created_at"))["oldest"]
         failed_events = dict(
             FailedEvent.objects.filter(

@@ -107,9 +107,23 @@ def process_event_once(topic, payload, event_key):
     - handler raises -> everything rolls back (including the ledger row) and
                     the exception propagates.
 
-    Limits: work done OUTSIDE the database (e.g. a Celery task already
-    queued by the handler) is not rolled back. This is duplicate suppression
-    with atomic database effects, not end-to-end exactly-once delivery.
+    Limits — the exactly-once boundary, stated precisely (F-008 review):
+    - DATABASE effects ARE exactly-once per event_key: the ledger row and the
+      handler's own writes commit or roll back together.
+    - Celery task dispatch is NOT: handlers call .delay() inside this
+      transaction, and a broker enqueue cannot be rolled back with it. There
+      is deliberately NO transaction.on_commit here: on_commit would convert
+      a crash between commit and callback into SILENT task loss (the event is
+      recorded processed, so nothing retries). The current placement errs the
+      other way — a commit failure after enqueue yields a retryable duplicate,
+      which the task layer suppresses (EmailNotification's locked
+      (booking, kind) ledger in apps/bookings/tasks.py, plus
+      ReceiptNotYetVisible for the task-reads-before-commit race).
+    - The one window neither layer closes: a worker dying after the SMTP
+      server accepted a message but before the task's own commit can send one
+      duplicate email (documented in apps/bookings/tasks.py).
+    So: duplicate suppression with atomic database effects — not end-to-end
+    exactly-once delivery, and task side effects are at-least-once.
     """
     from .models import ProcessedEvent
 
@@ -287,6 +301,33 @@ def run_booking_consumer():
         consumer.close()
 
 
+def run_inline(topic, outbox_event):
+    """
+    Demo-mode inline consumer: process an outbox event synchronously.
+
+    Called via transaction.on_commit() after the producing transaction commits.
+    Uses the same ProcessedEvent ledger as the Kafka consumer, so:
+    - If this succeeds, a future Kafka delivery is a noop (deduplicated).
+    - If this fails, the outbox row exists for eventual Kafka delivery or
+      manual replay (manage.py recovery replay-events --all).
+
+    Exceptions are logged and swallowed: the producing transaction has already
+    committed, so the primary state (Payment/Booking) is safe. A failure here
+    means the booking status transition is deferred — operationally equivalent
+    to Kafka consumer lag in the full stack.
+    """
+    event_key = f'{topic}:event:{outbox_event.event_id}'
+    payload = outbox_event.payload
+    try:
+        process_event_once(topic, payload, event_key)
+    except Exception:
+        logger.error(
+            'Inline consumer failed for %s event_id=%s: '
+            'booking transition deferred until replay or Kafka delivery',
+            topic, outbox_event.event_id, exc_info=True,
+        )
+
+
 def handle_booking_created(payload):
     from apps.bookings.tasks import send_booking_confirmation
     booking_id = payload.get('booking_id')
@@ -312,21 +353,34 @@ def handle_payment_success(payload):
         # is logged and returned, not re-raised.
         logger.error(f'Payment success event for unknown/invalid booking_id={booking_id!r}')
         return
-    if booking.status == 'PAID':
-        # Duplicate/redelivered event: nothing to change. The receipt task is
-        # idempotent (G03), so it is still queued.
-        logger.info(f'Booking {booking_id} is already PAID; status unchanged')
-    elif can_transition(booking.status, 'PAID'):
-        booking.status = 'PAID'
-        booking.save(update_fields=['status'])
-        logger.info(f'Booking {booking_id} marked PAID from payment.success event')
-    else:
-        # G11: e.g. a CANCELLED booking is never marked PAID by an event.
-        logger.error(
-            f'Payment success event for booking {booking_id} in status {booking.status}: '
-            f'not marked PAID; needs manual review (possible refund)'
-        )
-        return
+    # M16 race fix: the transition DECISION must be made on a row we hold.
+    # Previously the status was read without a lock, so a cancellation (user
+    # cancel, payment.failed event, or the expiry sweep) could commit
+    # CANCELLED + release the inventory between our read and our write, and
+    # this handler then blind-wrote PAID — a paid booking whose inventory was
+    # already given back. Same locked shape as handle_payment_failed below:
+    # re-read under select_for_update, gate on the CURRENT status, write in
+    # the same transaction. (On SQLite the lock is a no-op; only PostgreSQL
+    # proves the serialisation.)
+    with transaction.atomic():
+        booking = Booking.objects.select_for_update().get(pk=booking.pk)
+        if booking.status == 'PAID':
+            # Duplicate/redelivered event: nothing to change. The receipt task
+            # is idempotent (G03), so it is still queued below.
+            logger.info(f'Booking {booking_id} is already PAID; status unchanged')
+        elif can_transition(booking.status, 'PAID'):
+            booking.status = 'PAID'
+            booking.save(update_fields=['status'])
+            logger.info(f'Booking {booking_id} marked PAID from payment.success event')
+        else:
+            # G11 / F-006 (DEFERRED): e.g. a CANCELLED booking is never marked
+            # PAID by an event — a late capture lands on manual review, with
+            # no automatic refund or inventory change invented here.
+            logger.error(
+                f'Payment success event for booking {booking_id} in status {booking.status}: '
+                f'not marked PAID; needs manual review (possible refund)'
+            )
+            return
     send_payment_receipt.delay(str(booking.id))
 
 

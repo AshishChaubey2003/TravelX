@@ -11,6 +11,7 @@ import secrets
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User
 from django.core import mail
 from django.core.cache import cache
@@ -47,7 +48,10 @@ class AccountsTestBase(TestCase):
         if with_record:
             verification = EmailVerification.objects.create(user=user)
             verification.generate_otp()
-            EmailVerification.objects.filter(pk=verification.pk).update(otp=otp)
+            # F-010: force a KNOWN OTP the way production stores it — as an
+            # Argon2 hash, with the plaintext column empty.
+            EmailVerification.objects.filter(pk=verification.pk).update(
+                otp="", otp_hash=make_password(otp, hasher="argon2"))
             verification.refresh_from_db()
         return user, verification
 
@@ -79,9 +83,12 @@ class RegistrationHardeningTests(AccountsTestBase):
         body = mail.outbox[0].body
         match = OTP_IN_BODY.search(body)
         self.assertIsNotNone(match)
-        stored = EmailVerification.objects.get(user__username="hard_reg").otp
-        self.assertEqual(match.group(1), stored)
-        self.assertNotIn(stored, str(resp.data))
+        # F-010: the emailed OTP verifies against the stored Argon2 hash, and
+        # the plaintext column is empty — the OTP exists at rest only hashed.
+        record = EmailVerification.objects.get(user__username="hard_reg")
+        self.assertEqual(record.otp, "")
+        self.assertTrue(check_password(match.group(1), record.otp_hash))
+        self.assertNotIn(match.group(1), str(resp.data))
         self.assertNotIn(PASSWORD, body)
         self.assertFalse(User.objects.get(username="hard_reg").is_active)
 
@@ -168,13 +175,31 @@ class VerifyHardeningTests(AccountsTestBase):
         user.refresh_from_db()
         self.assertTrue(user.is_active)
 
-    def test_otp_comparison_is_constant_time(self):
+    def test_otp_comparison_goes_through_check_password(self):
+        """F-010: the hash path must use check_password (Argon2 verification
+        is constant-time in the underlying library), never string ==."""
         user, _ = self.pending_user()
-        with patch("apps.accounts.views.secrets.compare_digest",
-                   wraps=secrets.compare_digest) as compare:
+        from django.contrib.auth.hashers import check_password as real_check
+        with patch("apps.accounts.models.check_password",
+                   wraps=real_check) as compare:
             resp = self.verify(email=user.email, otp="000000")
         self.assertEqual(resp.status_code, 400)
         self.assertTrue(compare.called)
+
+    def test_legacy_plaintext_fallback_is_constant_time(self):
+        """An un-backfilled legacy row (otp set, otp_hash empty) still
+        verifies, through the original constant-time compare."""
+        user, verification = self.pending_user()
+        EmailVerification.objects.filter(pk=verification.pk).update(
+            otp="654321", otp_hash="")
+        with patch("apps.accounts.models.secrets.compare_digest",
+                   wraps=secrets.compare_digest) as compare:
+            resp = self.verify(email=user.email, otp="654321")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(compare.called)
+        verification.refresh_from_db()
+        self.assertEqual(verification.otp, "")       # consumed
+        self.assertEqual(verification.otp_hash, "")
 
     def test_activation_happens_only_after_valid_otp_and_otp_is_single_use(self):
         user, verification = self.pending_user()
@@ -183,14 +208,15 @@ class VerifyHardeningTests(AccountsTestBase):
         verification.refresh_from_db()
         self.assertFalse(user.is_active)
         self.assertFalse(verification.is_verified)
-        self.assertEqual(verification.otp, "654321")
+        self.assertTrue(verification.otp_matches("654321"))  # hash intact after a wrong try
 
         self.assertEqual(self.verify(email=user.email, otp="654321").status_code, 200)
         user.refresh_from_db()
         verification.refresh_from_db()
         self.assertTrue(user.is_active)
         self.assertTrue(verification.is_verified)
-        self.assertEqual(verification.otp, "")
+        self.assertEqual(verification.otp, "")       # single use: both wiped
+        self.assertEqual(verification.otp_hash, "")
 
         replay = self.verify(email=user.email, otp="654321")
         self.assertEqual(replay.status_code, 200)
@@ -206,7 +232,7 @@ class VerifyHardeningTests(AccountsTestBase):
         verification.refresh_from_db()
         self.assertFalse(user.is_active)
         self.assertFalse(verification.is_verified)
-        self.assertEqual(verification.otp, "654321")
+        self.assertTrue(verification.otp_matches("654321"))  # hash not consumed on expiry
 
     def test_already_verified_policy(self):
         # Policy: input validation runs first, then account state. A well-formed OTP for an
@@ -235,11 +261,12 @@ class ResendHardeningTests(AccountsTestBase):
         user, _ = self.pending_user(with_record=False)
         resp = self.resend(email=user.email)
         self.assertEqual(resp.status_code, 200)
-        stored = EmailVerification.objects.get(user=user).otp
+        record = EmailVerification.objects.get(user=user)
         self.assertEqual(len(mail.outbox), 1)
         match = OTP_IN_BODY.search(mail.outbox[0].body)
         self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), stored)
+        self.assertEqual(record.otp, "")  # F-010: plaintext never stored
+        self.assertTrue(check_password(match.group(1), record.otp_hash))
 
     def test_resend_refreshes_expiry_and_emails_the_stored_address(self):
         user, verification = self.pending_user(email="resend.case@example.com")
@@ -250,7 +277,9 @@ class ResendHardeningTests(AccountsTestBase):
         verification.refresh_from_db()
         self.assertGreater(verification.expires_at, timezone.now() + timedelta(minutes=9))
         self.assertEqual(mail.outbox[0].to, [user.email])
-        self.assertEqual(OTP_IN_BODY.search(mail.outbox[0].body).group(1), verification.otp)
+        emailed = OTP_IN_BODY.search(mail.outbox[0].body).group(1)
+        self.assertEqual(verification.otp, "")  # F-010: plaintext never stored
+        self.assertTrue(check_password(emailed, verification.otp_hash))
 
     def test_email_failure_keeps_previous_otp_valid_and_hides_details(self):
         user, verification = self.pending_user()
@@ -267,7 +296,10 @@ class ResendHardeningTests(AccountsTestBase):
         self.assertIn("ResendOTPView", joined)
         self.assertIn("error_type=OSError", joined)
         verification.refresh_from_db()
-        self.assertEqual(verification.otp, "654321")
+        # F-010: the restore puts back the PREVIOUS hash (and empty plaintext),
+        # so the code the user last received still verifies.
+        self.assertEqual(verification.otp, "")
+        self.assertTrue(verification.otp_matches("654321"))
         self.assertEqual(verification.expires_at, old_expiry)
         self.assertFalse(verification.is_verified)
         # The code the user last received still works.
@@ -330,7 +362,10 @@ class OTPGenerationTests(TestCase):
         self.assertEqual(otp, "000042")
         randbelow.assert_called_once_with(10 ** 6)
         verification.refresh_from_db()
-        self.assertEqual(verification.otp, "000042")
+        # F-010: only the Argon2 hash is stored; the plaintext column stays empty.
+        self.assertEqual(verification.otp, "")
+        self.assertTrue(verification.otp_hash.startswith("argon2"))
+        self.assertTrue(check_password("000042", verification.otp_hash))
         remaining = (verification.expires_at - timezone.now()).total_seconds()
         self.assertAlmostEqual(remaining, 600, delta=5)
 

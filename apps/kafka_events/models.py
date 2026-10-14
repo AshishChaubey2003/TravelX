@@ -33,15 +33,23 @@ class OutboxEvent(models.Model):
     longer silently lose an event.
 
     PENDING   waiting to be (re)published
+    IN_FLIGHT reserved by one relay pass (lease_id identifies the owner);
+              being produced to Kafka right now. A row stuck IN_FLIGHT past
+              OUTBOX_INFLIGHT_RESCUE_SECONDS (relay crashed mid-pass) is
+              returned to PENDING by rescue_stale_inflight_events, which also
+              clears lease_id so the crashed pass's finalizer — if it is
+              somehow still alive — can no longer touch the row (F-008).
     PUBLISHED delivery to Kafka was confirmed
     DEAD      gave up after max_attempts; needs a human to look and replay
               (manage.py recovery replay-outbox)
     """
     STATUS_PENDING = 'PENDING'
+    STATUS_IN_FLIGHT = 'IN_FLIGHT'
     STATUS_PUBLISHED = 'PUBLISHED'
     STATUS_DEAD = 'DEAD'
     STATUS_CHOICES = [
         (STATUS_PENDING, 'Pending'),
+        (STATUS_IN_FLIGHT, 'In flight'),
         (STATUS_PUBLISHED, 'Published'),
         (STATUS_DEAD, 'Dead'),
     ]
@@ -55,6 +63,11 @@ class OutboxEvent(models.Model):
     last_error = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     next_attempt_at = models.DateTimeField(default=timezone.now)
+    # F-008 lease ownership: set when a relay pass reserves the row
+    # (IN_FLIGHT), cleared on finalize and by the watchdog. A finalizer may
+    # only write a row whose lease_id still equals its own lease.
+    lease_id = models.UUIDField(null=True, blank=True)
+    inflight_at = models.DateTimeField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

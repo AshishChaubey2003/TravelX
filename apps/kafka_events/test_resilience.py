@@ -280,13 +280,26 @@ class WorkerRestartScenarios(TestCase):
         wire = []
 
         # Relay run 1: Kafka accepted the message, then the relay died before
-        # it could record that. The database update rolls back.
+        # it could finalize. F-008 lease design: the Reserve step had already
+        # COMMITTED the row as IN_FLIGHT (produce/flush run outside any
+        # transaction), so the crash leaves it IN_FLIGHT — owned by a lease
+        # whose pass is dead.
         with self.assertRaises(RuntimeError):
             _relay(WireProducer(wire, die_after_flush=True))
-        self.assertEqual(OutboxEvent.objects.get().status, "PENDING")
+        row = OutboxEvent.objects.get()
+        self.assertEqual(row.status, "IN_FLIGHT")
+        self.assertIsNotNone(row.lease_id)
         self.assertEqual(len(wire), 1)
 
-        # Relay run 2 (restart): the event is still pending, so it is sent again.
+        # The watchdog (manual/unscheduled) rescues the stuck row: back to
+        # PENDING, lease cleared so the dead pass can never finalize it.
+        from apps.kafka_events.outbox import rescue_stale_inflight_events
+        self.assertEqual(rescue_stale_inflight_events(rescue_seconds=0), 1)
+        row.refresh_from_db()
+        self.assertEqual(row.status, "PENDING")
+        self.assertIsNone(row.lease_id)
+
+        # Relay run 2 (restart): the event is pending again, so it is sent again.
         summary = _relay(WireProducer(wire))
         self.assertEqual(summary["published"], 1)
         self.assertEqual(OutboxEvent.objects.get().status, "PUBLISHED")

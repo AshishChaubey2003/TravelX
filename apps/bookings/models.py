@@ -55,6 +55,15 @@ class BookingItem(models.Model):
     quantity = models.IntegerField(default=1)
     nights = models.IntegerField(default=1, null=True, blank=True)
 
+    class Meta:
+        indexes = [
+            # F-004: serves the per-resource overlap count in
+            # BookingService._overlap_count (filter on item_type + item_id;
+            # the join to Booking rides the FK index). No ORDER BY involved.
+            models.Index(fields=['item_type', 'item_id'],
+                         name='bookingitem_item_lookup'),
+        ]
+
     def __str__(self):
         return f"{self.item_type} - {self.item_name}"
 

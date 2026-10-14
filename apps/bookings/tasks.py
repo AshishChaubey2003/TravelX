@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 
 RETRYABLE_EXCEPTIONS = (OSError, OperationalError, SoftTimeLimitExceeded)
 
+# F-005: Celery autodiscovery imports only this module (tasks.py), so the
+# expiry sweep's module must be imported from here for its @shared_task to
+# register on workers (it stays DORMANT — registered, never scheduled).
+# Imported at the bottom of this module to keep import order obvious; see
+# the import statement at the end of the file.
+
 
 class ReceiptNotYetVisible(OSError):
     """
@@ -219,3 +225,9 @@ def send_payment_receipt(booking_id):
         f"Thank you for choosing TravelX."
     )
     return _send_once(booking, EmailNotification.KIND_RECEIPT, subject, message)
+
+# F-005 (see the note near RETRYABLE_EXCEPTIONS): registers the dormant
+# expiry sweep with Celery via autodiscovery of this module. The sweep's own
+# imports are lazy (inside its functions), so this cannot create an import
+# cycle.
+from apps.bookings import tasks_expiry  # noqa: E402,F401  (registration import)

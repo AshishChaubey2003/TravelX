@@ -14,6 +14,9 @@ ALLOWED_TASK_NAMES = frozenset({
     'apps.bookings.tasks.send_booking_confirmation',
     'apps.bookings.tasks.send_payment_receipt',
     'apps.core.tasks.monitor_dependencies',   # H04
+    # F-005: registered but DORMANT — no beat entry; manual invocation only
+    # (manage.py expire_pending_bookings). Scheduling is a separate approval.
+    'apps.bookings.tasks_expiry.expire_stale_pending_bookings',
 })
 
 # The subset of those tasks that "manage.py recovery replay-tasks" may re-queue

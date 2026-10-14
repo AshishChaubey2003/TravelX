@@ -73,4 +73,6 @@ class ConsoleBackendEncodingTests(TestCase):
         user = User.objects.get(username="cp1252_sim_user")
         self.assertFalse(user.is_active)
         verification = EmailVerification.objects.get(user=user)
-        self.assertTrue(verification.otp)
+        # F-010: the OTP is stored hashed; plaintext stays empty.
+        self.assertTrue(verification.otp_hash)
+        self.assertEqual(verification.otp, "")

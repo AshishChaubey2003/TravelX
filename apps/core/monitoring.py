@@ -59,7 +59,12 @@ def check_outbox():
     max_pending = getattr(settings, "MONITOR_OUTBOX_MAX_PENDING", 100)
     max_age = getattr(settings, "MONITOR_OUTBOX_MAX_AGE_SECONDS", 300)
 
-    pending_qs = OutboxEvent.objects.filter(status=OutboxEvent.STATUS_PENDING)
+    # F-008: IN_FLIGHT rows are counted as "pending" here on purpose — they
+    # are reserved-but-unconfirmed, and a row stuck IN_FLIGHT after a relay
+    # crash must raise this monitor, not hide from it (the watchdog returns
+    # it to PENDING, but the monitor cannot assume the watchdog ran).
+    pending_qs = OutboxEvent.objects.filter(
+        status__in=(OutboxEvent.STATUS_PENDING, OutboxEvent.STATUS_IN_FLIGHT))
     pending = pending_qs.count()
     dead = OutboxEvent.objects.filter(status=OutboxEvent.STATUS_DEAD).count()
     oldest = pending_qs.aggregate(oldest=Min("created_at"))["oldest"]

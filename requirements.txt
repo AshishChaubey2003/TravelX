@@ -49,3 +49,5 @@ setuptools==69.5.1
 sentry-sdk>=2.0,<3.0
 prometheus-client>=0.20,<1.0
 PyYAML>=6.0,<7.0
+# F-010: Argon2 for OTP hashing (PASSWORD_HASHERS keeps PBKDF2 first for user passwords)
+argon2-cffi>=23.1,<25

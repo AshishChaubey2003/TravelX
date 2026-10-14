@@ -29,6 +29,7 @@ refund is applied here, atomically.
 import json
 import logging
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
@@ -219,13 +220,23 @@ def _handle_payment_captured(entity, payload):
 
     # G08: same transaction as the state change above. If this raises, the
     # payment transition rolls back rather than committing without its event.
-    enqueue_event(TOPIC_PAYMENT_SUCCESS, {
+    outbox_event = enqueue_event(TOPIC_PAYMENT_SUCCESS, {
         'booking_id': str(booking.id),
         'user_id': str(booking.user.id),
         'user_email': booking.user.email,
         'amount': str(payment.amount),
         'stripe_session_id': payment.stripe_session_id,
     })
+
+    # DEMO_INLINE_CONSUMER: after the outer _process() transaction commits,
+    # process the payment.success event inline (marks booking PAID, sends
+    # receipt via eager Celery). on_commit fires only on the outermost atomic
+    # — i.e. the _process() block — so Payment + outbox row are committed.
+    if getattr(settings, 'DEMO_INLINE_CONSUMER', False):
+        from apps.kafka_events.consumers import run_inline
+        _evt = outbox_event
+        transaction.on_commit(lambda: run_inline(TOPIC_PAYMENT_SUCCESS, _evt))
+
     return 'processed'
 
 
@@ -248,12 +259,20 @@ def _handle_payment_failed(entity, payload):
     payment.raw_webhook = _safe_webhook_record(payload, entity)
     payment.save(update_fields=['status', 'webhook_received_at', 'raw_webhook'])
 
-    enqueue_event(TOPIC_PAYMENT_FAILED, {
+    outbox_event = enqueue_event(TOPIC_PAYMENT_FAILED, {
         'booking_id': str(booking.id),
         'user_id': str(booking.user.id),
         'user_email': booking.user.email,
         'total_amount': str(booking.total_amount),
     })
+
+    # DEMO_INLINE_CONSUMER: inline payment.failed → cancels booking + releases
+    # inventory, same guarantees as the Kafka consumer path.
+    if getattr(settings, 'DEMO_INLINE_CONSUMER', False):
+        from apps.kafka_events.consumers import run_inline
+        _evt = outbox_event
+        transaction.on_commit(lambda: run_inline(TOPIC_PAYMENT_FAILED, _evt))
+
     return 'processed'
 
 

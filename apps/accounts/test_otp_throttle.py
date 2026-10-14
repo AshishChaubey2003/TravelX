@@ -18,7 +18,9 @@ class OTPVerifyThrottleTests(TestCase):
             password='pw12345!', is_active=False,
         )
         self.verification = EmailVerification.objects.create(user=self.user)
-        self.verification.generate_otp()
+        # F-010: generate_otp() stores only the hash; keep the returned
+        # plaintext for requests that need to submit the real code.
+        self.plain_otp = self.verification.generate_otp()
 
     # FIX (F-22 throttle test follow-up): see test_plan_trip.py for the
     # explanation. patch.dict mutates the live, shared THROTTLE_RATES dict
@@ -36,7 +38,7 @@ class OTPVerifyThrottleTests(TestCase):
 
     def test_otp_expiry_and_success_still_work(self):
         cache.clear()
-        otp = self.verification.otp
+        otp = self.plain_otp
         url = '/api/v1/auth/verify-otp/'
         resp = self.client.post(url, {'email': self.user.email, 'otp': otp}, format='json')
         self.assertEqual(resp.status_code, 200)

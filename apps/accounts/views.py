@@ -1,5 +1,4 @@
 import logging
-import secrets
 
 from rest_framework import status
 from rest_framework.views import APIView
@@ -15,12 +14,10 @@ from .models import EmailVerification
 
 logger = logging.getLogger('travelx.request')
 
-
-def _otp_matches(stored, supplied):
-    """Constant-time OTP comparison. An empty/unset stored OTP never matches."""
-    if not stored or not supplied:
-        return False
-    return secrets.compare_digest(stored.encode('utf-8'), supplied.encode('utf-8'))
+# F-010: OTP comparison lives on the model now (EmailVerification.otp_matches
+# — Argon2 hash check with a constant-time plaintext fallback for
+# un-backfilled legacy rows). OTP plaintext exists only in the outgoing
+# email, never at rest and never in logs.
 
 
 class RegisterView(APIView):
@@ -112,12 +109,16 @@ class VerifyOTPView(APIView):
                     return Response({'message': 'Email already verified!'})
 
                 if verification.is_expired():
+                    # F-020: do NOT ask the user to re-register — the account
+                    # already exists (inactive) and RegisterView will refuse
+                    # the email as taken. ResendOTPView is the correct path
+                    # and the client exposes it as the "Resend OTP" button.
                     return Response(
-                        {'error': 'OTP expired! Please register again.'},
+                        {'error': 'OTP expired — tap "Resend OTP" to get a new one.'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-                if not _otp_matches(verification.otp, otp):
+                if not verification.otp_matches(otp):
                     return Response(
                         {'error': 'Invalid OTP!'},
                         status=status.HTTP_400_BAD_REQUEST
@@ -126,7 +127,7 @@ class VerifyOTPView(APIView):
                 # Verify karo
                 with transaction.atomic():
                     verification.is_verified = True
-                    verification.otp = ''  # single use
+                    verification.consume_otp()  # single use: wipes hash + legacy plaintext
                     verification.save()
                     user.is_active = True
                     user.save()
@@ -172,7 +173,9 @@ class ResendOTPView(APIView):
             if verification.is_verified:
                 # Verified but inactive (e.g. deactivated): a fresh OTP would be useless.
                 raise User.DoesNotExist
-            previous = (verification.otp, verification.expires_at)
+            # F-010: snapshot BOTH fields so an SMTP failure restores the
+            # exact prior state (hash and, for a legacy row, plaintext).
+            previous = (verification.otp, verification.otp_hash, verification.expires_at)
             otp = verification.generate_otp()
 
             send_mail(
@@ -196,7 +199,7 @@ class ResendOTPView(APIView):
             # user last received still works. Never echo exception details to the client.
             if verification is not None and previous is not None:
                 EmailVerification.objects.filter(pk=verification.pk).update(
-                    otp=previous[0], expires_at=previous[1]
+                    otp=previous[0], otp_hash=previous[1], expires_at=previous[2]
                 )
             logger.error(
                 "ResendOTPView: failed to send new OTP for user_id=%s error_type=%s",

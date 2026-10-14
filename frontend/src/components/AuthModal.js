@@ -5,6 +5,53 @@ import { useAuth } from "../context/AuthContext";
 import API from "../api";
 import Logo from "./Logo";
 
+// FE-004/FE-006: Pull the most useful human-readable message out of an axios
+// error. Handles DRF's three common error shapes without exposing stack
+// traces, server internals, or raw exception text:
+//   1. Network error (no response)     -> connectivity hint
+//   2. 429 Too Many Requests           -> throttle wait message
+//   3. Payload shape {detail: "..."}   -> DRF framework errors (auth, throttle)
+//   4. Payload shape {error:  "..."}   -> this app's own view-level errors
+//   5. Payload shape {field: ["..."]}  -> DRF serializer validation errors
+// If none match, the caller's fallback string is used. Never returns a
+// Python-looking traceback or an exception class name.
+function friendlyError(e, fallback) {
+  if (!e || !e.response) {
+    return "Network error — check your connection and try again.";
+  }
+  const { status, data } = e.response;
+  if (status === 429) {
+    return (
+      (data && typeof data.detail === "string" && data.detail) ||
+      "Too many attempts. Please wait a moment and try again."
+    );
+  }
+  if (data && typeof data === "object") {
+    if (typeof data.error === "string" && data.error) return data.error;
+    if (typeof data.detail === "string" && data.detail) return data.detail;
+    // DRF serializer errors: pick the first field's first message and label
+    // it, so the user can see which field needs fixing.
+    const keys = Object.keys(data);
+    for (const key of keys) {
+      const val = data[key];
+      let msg = null;
+      if (Array.isArray(val) && val.length > 0 && typeof val[0] === "string") {
+        msg = val[0];
+      } else if (typeof val === "string") {
+        msg = val;
+      }
+      if (msg) {
+        if (key === "non_field_errors" || key === "detail" || key === "error") {
+          return msg;
+        }
+        const label = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ");
+        return `${label}: ${msg}`;
+      }
+    }
+  }
+  return fallback;
+}
+
 export default function AuthModal({ tab, onClose }) {
   const [activeTab, setActiveTab] = useState(tab);
   const [form, setForm] = useState({});
@@ -24,8 +71,23 @@ export default function AuthModal({ tab, onClose }) {
       doLogin(data.access);
       toast.success("Welcome back! 🎉");
       onClose();
-    } catch {
-      toast.error("Invalid credentials");
+    } catch (e) {
+      // FE-004: distinguish bad credentials, throttling, and network error
+      // instead of one generic message. simplejwt returns 401 with a detail
+      // string, DRF throttles return 429, and axios signals a network error
+      // by having no `.response`.
+      if (!e.response) {
+        toast.error("Network error — check your connection and try again.");
+      } else if (e.response.status === 401) {
+        toast.error("Invalid username or password.");
+      } else if (e.response.status === 429) {
+        toast.error(
+          (e.response.data && e.response.data.detail) ||
+            "Too many attempts. Please wait a moment and try again."
+        );
+      } else {
+        toast.error(friendlyError(e, "Login failed. Please try again."));
+      }
     }
     setLoading(false);
   };
@@ -33,18 +95,22 @@ export default function AuthModal({ tab, onClose }) {
   const handleRegister = async () => {
     setLoading(true);
     try {
-      const res = await register({
+      await register({
         username: form.username,
         email: form.email,
         password: form.password,
       });
-      console.log("Register response:", res.data);
+      // FE-013: removed `console.log("Register response:", res.data)` so the
+      // register response payload (which includes the created email and may
+      // in future include tokens) never reaches the browser console.
       setRegisteredEmail(form.email);
       setStep("otp");
       toast.success("OTP sent to your email! 📧");
     } catch (e) {
-      console.log("Register error:", e.response?.data);
-      toast.error(e.response?.data?.error || "Registration failed");
+      // FE-006/FE-013: show the actual DRF field error so the user can fix
+      // their input, instead of a generic "Registration failed". Also do
+      // not log the raw error payload to the console in production.
+      toast.error(friendlyError(e, "Registration failed. Please try again."));
     }
     setLoading(false);
   };
@@ -61,7 +127,7 @@ export default function AuthModal({ tab, onClose }) {
       setActiveTab("login");
       setForm({});
     } catch (e) {
-      toast.error(e.response?.data?.error || "Invalid OTP!");
+      toast.error(friendlyError(e, "Invalid OTP."));
     }
     setLoading(false);
   };
@@ -72,8 +138,8 @@ export default function AuthModal({ tab, onClose }) {
         email: registeredEmail,
       });
       toast.success("New OTP sent! 📧");
-    } catch {
-      toast.error("Failed to resend OTP");
+    } catch (e) {
+      toast.error(friendlyError(e, "Failed to resend OTP."));
     }
   };
 
@@ -255,7 +321,12 @@ export default function AuthModal({ tab, onClose }) {
               {["login", "register"].map((t) => (
                 <button
                   key={t}
-                  onClick={() => setActiveTab(t)}
+                  onClick={() => {
+                    // FE-005: reset form state when switching tabs so a
+                    // password typed under one tab is not carried over.
+                    setActiveTab(t);
+                    setForm({});
+                  }}
                   style={{
                     flex: 1,
                     padding: "0.6rem",
