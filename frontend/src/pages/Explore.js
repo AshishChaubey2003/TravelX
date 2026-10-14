@@ -46,7 +46,15 @@ export default function Explore() {
         const c = await getCities();
         const list = c.data.results || c.data || [];
         setCities(list);
-        if (!cityId && list.length) setCityId(list[0].id);
+        if (!cityId && list.length) {
+          setCityId(list[0].id);
+        } else if (!list.length) {
+          // No cities at all: cityId stays null, so the effect below never
+          // calls loadAll() and nothing else would ever clear `loading` -
+          // the page sat on skeleton placeholders forever. Resolve it here
+          // so the empty state is shown instead.
+          setLoading(false);
+        }
       } catch {
         console.error("Failed to load cities");
         setLoading(false);
