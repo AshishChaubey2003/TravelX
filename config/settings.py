@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 import dj_database_url
-from decouple import config
+from decouple import config, Csv
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -26,7 +26,12 @@ if not DEBUG and not _SECRET_KEY_ENV:
     )
 SECRET_KEY = _SECRET_KEY_ENV or 'django-insecure-travelx-dev-key-change-in-production'
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,0.0.0.0,web').split(',')
+# Csv() splits on commas AND strips surrounding whitespace from each host and
+# drops empty entries. A bare .split(',') did neither, so a value entered the
+# natural way in a dashboard ("host-a, host-b") kept a leading space on every
+# entry after the first and never matched the incoming Host header
+# (DisallowedHost). Same caster the health-check settings below already use.
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,0.0.0.0,web', cast=Csv())
 
 # Application definition
 INSTALLED_APPS = [
