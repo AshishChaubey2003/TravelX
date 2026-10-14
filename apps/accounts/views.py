@@ -1,12 +1,23 @@
+import logging
+
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import ScopedRateThrottle
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
 from django.conf import settings
-from .serializers import RegisterSerializer, VerifyOTPSerializer
+from django.db import transaction
+from .serializers import RegisterSerializer, ResendOTPSerializer, VerifyOTPSerializer
 from .models import EmailVerification
+
+logger = logging.getLogger('travelx.request')
+
+# F-010: OTP comparison lives on the model now (EmailVerification.otp_matches
+# — Argon2 hash check with a constant-time plaintext fallback for
+# un-backfilled legacy rows). OTP plaintext exists only in the outgoing
+# email, never at rest and never in logs.
 
 
 class RegisterView(APIView):
@@ -40,11 +51,19 @@ Team TravelX
                     recipient_list=[user.email],
                     fail_silently=False,
                 )
-            except Exception as e:
+            except Exception as exc:
+                # Capture the id first: delete() clears the instance pk.
+                user_id = user.id
                 user.delete()
+                # Log only the exception class: SMTP error text can carry hostnames or
+                # credentials, and the OTP / password must never reach the logs.
+                logger.error(
+                    "RegisterView: failed to send verification email for user_id=%s error_type=%s",
+                    user_id, type(exc).__name__,
+                )
                 return Response(
-                    {'error': f'Email send failed: {str(e)}'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    {'error': 'Registration could not be completed. Please try again later.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
 
             return Response({
@@ -58,6 +77,8 @@ Team TravelX
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'otp_verify'
 
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
@@ -66,29 +87,50 @@ class VerifyOTPView(APIView):
             otp = serializer.validated_data['otp']
 
             try:
-                user = User.objects.get(email=email)
-                verification = EmailVerification.objects.get(user=user)
+                # Case-insensitive lookup; if legacy data holds several accounts whose
+                # emails differ only by case, prefer the pending (inactive) one.
+                user = (
+                    User.objects.filter(email__iexact=email)
+                    .order_by('is_active', 'id')
+                    .first()
+                )
+                if user is None:
+                    raise User.DoesNotExist
+                verification = EmailVerification.objects.filter(user=user).first()
+                if verification is None:
+                    if user.is_active:
+                        return Response({'message': 'Email already verified!'})
+                    return Response(
+                        {'error': 'Verification record not found! Please request a new OTP.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
                 if verification.is_verified:
                     return Response({'message': 'Email already verified!'})
 
                 if verification.is_expired():
+                    # F-020: do NOT ask the user to re-register — the account
+                    # already exists (inactive) and RegisterView will refuse
+                    # the email as taken. ResendOTPView is the correct path
+                    # and the client exposes it as the "Resend OTP" button.
                     return Response(
-                        {'error': 'OTP expired! Please register again.'},
+                        {'error': 'OTP expired — tap "Resend OTP" to get a new one.'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-                if verification.otp != otp:
+                if not verification.otp_matches(otp):
                     return Response(
                         {'error': 'Invalid OTP!'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
                 # Verify karo
-                verification.is_verified = True
-                verification.save()
-                user.is_active = True
-                user.save()
+                with transaction.atomic():
+                    verification.is_verified = True
+                    verification.consume_otp()  # single use: wipes hash + legacy plaintext
+                    verification.save()
+                    user.is_active = True
+                    user.save()
 
                 return Response({
                     'message': 'Email verified successfully! You can now login. ✅'
@@ -106,19 +148,41 @@ class VerifyOTPView(APIView):
 class ResendOTPView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'otp_resend'
 
     def post(self, request):
-        email = request.data.get('email')
+        serializer = ResendOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        email = serializer.validated_data['email']
+
+        user_id = None
+        verification = None
+        previous = None
         try:
-            user = User.objects.get(email=email, is_active=False)
-            verification = EmailVerification.objects.get(user=user)
+            user = (
+                User.objects.filter(email__iexact=email, is_active=False)
+                .order_by('id')
+                .first()
+            )
+            if user is None:
+                raise User.DoesNotExist
+            user_id = user.id
+            verification, _ = EmailVerification.objects.get_or_create(user=user)
+            if verification.is_verified:
+                # Verified but inactive (e.g. deactivated): a fresh OTP would be useless.
+                raise User.DoesNotExist
+            # F-010: snapshot BOTH fields so an SMTP failure restores the
+            # exact prior state (hash and, for a legacy row, plaintext).
+            previous = (verification.otp, verification.otp_hash, verification.expires_at)
             otp = verification.generate_otp()
 
             send_mail(
                 subject='TravelX — New OTP',
                 message=f'Your new OTP is: {otp}\n\nValid for 10 minutes.',
                 from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
+                recipient_list=[user.email],
                 fail_silently=False,
             )
 
@@ -128,4 +192,20 @@ class ResendOTPView(APIView):
             return Response(
                 {'error': 'User not found or already verified!'},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        except Exception as exc:
+            # Sending (or persisting) failed: put the previous OTP back so the code the
+            # user last received still works. Never echo exception details to the client.
+            if verification is not None and previous is not None:
+                EmailVerification.objects.filter(pk=verification.pk).update(
+                    otp=previous[0], otp_hash=previous[1], expires_at=previous[2]
+                )
+            logger.error(
+                "ResendOTPView: failed to send new OTP for user_id=%s error_type=%s",
+                user_id, type(exc).__name__,
+            )
+            return Response(
+                {'error': 'Could not send OTP. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

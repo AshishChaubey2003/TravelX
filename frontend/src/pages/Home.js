@@ -42,7 +42,7 @@ const CATEGORY_CARDS = [
 export default function Home() {
   const [cities, setCities] = useState([]);
   const [search, setSearch] = useState("");
-  const [selectedCity, setSelectedCity] = useState(null);
+  const [, setSelectedCity] = useState(null);
   const [heroIndex, setHeroIndex] = useState(0);
   const navigate = useNavigate();
 

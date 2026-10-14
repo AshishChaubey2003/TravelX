@@ -4,6 +4,7 @@ import { Toaster } from "react-hot-toast";
 import { AuthProvider } from "./context/AuthContext";
 import Navbar from "./components/Navbar";
 import AIWidget from "./components/AIWidget";
+import ProtectedRoute from "./components/ProtectedRoute";
 import Home from "./pages/Home";
 import Explore from "./pages/Explore";
 import "./App.css";
@@ -29,7 +30,14 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/explore" element={<Explore />} />
-          <Route path="/my-bookings" element={<MyBookings />} />
+          <Route
+            path="/my-bookings"
+            element={
+              <ProtectedRoute>
+                <MyBookings />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/payment-success" element={<PaymentSuccess />} />
           <Route path="/payment-cancel" element={<PaymentCancel />} />
         </Routes>

@@ -1,21 +1,36 @@
+import logging
+
 from groq import Groq
 from django.conf import settings
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import ScopedRateThrottle
 from apps.locations.models import City
 from apps.hotels.models import Hotel
 from apps.adventures.models import Adventure
 from apps.vehicles.models import Vehicle
+from .serializers import PlanTripRequestSerializer
+
+logger = logging.getLogger('travelx.request')
 
 client = Groq(api_key=settings.GROQ_API_KEY)
 
 
+# F-025: these helpers used bare `except:` which caught KeyboardInterrupt /
+# SystemExit and masked real schema or DB errors as "nothing available". We
+# now log the exception TYPE at WARNING (traceback goes to the configured
+# JsonFormatter which runs the redact() filter — no PII, tokens or query
+# arguments reach the message string itself) and return [] so the planner
+# degrades gracefully. The request_id correlation ID is attached by the H01
+# middleware so the warning is traceable to the caller.
 def get_cities():
     try:
         cities = City.objects.filter(is_active=True).values('id', 'name', 'state')
         return [{'id': str(c['id']), 'name': c['name'], 'state': c['state']} for c in cities]
-    except:
+    except Exception:
+        logger.warning('ai_agent.get_cities failed', exc_info=True)
         return []
 
 
@@ -23,7 +38,8 @@ def get_hotels(city_id):
     try:
         hotels = Hotel.objects.filter(city_id=city_id, is_active=True).values('id', 'name', 'price_per_night', 'rating', 'available_rooms')
         return [{'id': str(h['id']), 'name': h['name'], 'price_per_night': str(h['price_per_night']), 'rating': h['rating'], 'available_rooms': h['available_rooms']} for h in hotels]
-    except:
+    except Exception:
+        logger.warning('ai_agent.get_hotels failed', exc_info=True)
         return []
 
 
@@ -31,7 +47,8 @@ def get_adventures(city_id):
     try:
         adventures = Adventure.objects.filter(city_id=city_id, is_active=True).values('id', 'name', 'price_per_person', 'duration_hours', 'difficulty')
         return [{'id': str(a['id']), 'name': a['name'], 'price_per_person': str(a['price_per_person']), 'duration_hours': a['duration_hours'], 'difficulty': a['difficulty']} for a in adventures]
-    except:
+    except Exception:
+        logger.warning('ai_agent.get_adventures failed', exc_info=True)
         return []
 
 
@@ -39,20 +56,22 @@ def get_vehicles(city_id):
     try:
         vehicles = Vehicle.objects.filter(city_id=city_id, is_available=True).values('id', 'name', 'price_per_day', 'vehicle_type')
         return [{'id': str(v['id']), 'name': v['name'], 'price_per_day': str(v['price_per_day']), 'vehicle_type': v['vehicle_type']} for v in vehicles]
-    except:
+    except Exception:
+        logger.warning('ai_agent.get_vehicles failed', exc_info=True)
         return []
 
 
 class PlanTripView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ai_plan_trip'
 
     def post(self, request):
-        query = request.data.get('query', '')
-        session = request.data.get('session', {})
-
-        if not query:
-            return Response({'error': 'Query required'}, status=400)
+        serializer = PlanTripRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        query = serializer.validated_data['query']
+        session = serializer.validated_data.get('session') or {}
 
         try:
             cities = get_cities()
@@ -146,12 +165,15 @@ class PlanTripView(APIView):
                     'type': 'options'
                 })
 
-        except Exception as e:
-            return Response({
-                'response': f'AI error: {str(e)}',
-                'session': {'step': 'initial'},
-                'type': 'text'
-            }, status=200)
+        except Exception:
+            logger.exception(
+                "PlanTripView: unexpected error while planning a trip (step=%s)",
+                session.get('step', 'initial'),
+            )
+            return Response(
+                {'error': 'Something went wrong while planning your trip. Please try again.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 def generate_final_plan(session, city):

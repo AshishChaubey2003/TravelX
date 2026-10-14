@@ -1,12 +1,37 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import toast from "react-hot-toast";
-import API, { createBooking } from "../api";
+import API from "../api";
 import { useAuth } from "../context/AuthContext";
+
+// FE-009: generate a UUID per booking attempt the user starts. We keep the
+// same key for every retry inside this modal lifecycle so a double-click,
+// react-strict-mode re-run, or flaky network does NOT create duplicate
+// bookings — the backend recognises the key and replays the original
+// Booking with the `Idempotent-Replay: true` response header. A new modal
+// instance gets a new key, which is correct: that's a genuinely new
+// booking attempt the user made deliberately.
+function _generateIdempotencyKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers (no secure RNG — collision risk is extremely
+  // low across one modal lifecycle, but we never want to fall through here
+  // on a modern target).
+  return (
+    Math.random().toString(36).slice(2) +
+    "-" +
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2)
+  );
+}
 
 export default function BookingModal({ type, item, onClose }) {
   const { token } = useAuth();
   const today = new Date().toISOString().split("T")[0];
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+  // Stable for the whole lifetime of this modal, so retries use the same key.
+  const idempotencyKeyRef = useRef(_generateIdempotencyKey());
 
   const [form, setForm] = useState({
     check_in: today,
@@ -28,13 +53,29 @@ export default function BookingModal({ type, item, onClose }) {
       toast.error("Please login first!");
       return;
     }
+    // FE-014: client-side date validation. The backend also enforces this
+    // (apps/bookings/serializers.py validate_check_in + validate), but
+    // catching it here avoids a round-trip and a confusing API error toast.
+    if (form.check_in < today) {
+      toast.error("Check-in date cannot be in the past.");
+      return;
+    }
+    if (type !== "adventure" && form.check_out <= form.check_in) {
+      toast.error("Check-out must be after check-in.");
+      return;
+    }
+    if (type === "adventure" && (!form.spots || form.spots < 1)) {
+      toast.error("Please choose at least one spot.");
+      return;
+    }
     setLoading(true);
     try {
-      // Step 1 — Booking create karo
+      // Step 1 — create the booking record. The backend's BookingCreateSerializer
+      // computes nights from the dates and no longer accepts a client-supplied
+      // `nights` (F-017), so we do not send it.
       const body = {
         check_in: form.check_in,
         check_out: form.check_out,
-        nights: form.nights,
       };
       if (type === "hotel") body.hotel_id = item.id;
       if (type === "adventure") {
@@ -43,7 +84,13 @@ export default function BookingModal({ type, item, onClose }) {
       }
       if (type === "vehicle") body.vehicle_id = item.id;
 
-      const { data: booking } = await createBooking(body);
+      // FE-009: send the Idempotency-Key so a repeated submission within
+      // this modal (double-click, retry) returns the ORIGINAL booking with
+      // the `Idempotent-Replay: true` header instead of creating a second
+      // booking + decrementing inventory a second time.
+      const { data: booking } = await API.post("/bookings/", body, {
+        headers: { "Idempotency-Key": idempotencyKeyRef.current },
+      });
       toast.success("Booking created! Opening payment...");
 
       // Step 2 — Razorpay order create karo
@@ -240,6 +287,7 @@ export default function BookingModal({ type, item, onClose }) {
             <label style={labelStyle}>Check In</label>
             <input
               type="date"
+              min={today}
               style={inputStyle}
               value={form.check_in}
               onChange={(e) => setForm({ ...form, check_in: e.target.value })}
@@ -250,6 +298,7 @@ export default function BookingModal({ type, item, onClose }) {
               <label style={labelStyle}>Check Out</label>
               <input
                 type="date"
+                min={form.check_in || today}
                 style={inputStyle}
                 value={form.check_out}
                 onChange={(e) =>

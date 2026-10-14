@@ -1,4 +1,16 @@
-version: '3.9'
+# Local/dev stack. Production settings are a separate concern (H08).
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: travelx_app:local
+  env_file:
+    - .env
+  volumes:
+    - .:/app
+  networks:
+    - travelx_network
 
 services:
 
@@ -6,17 +18,18 @@ services:
     image: postgres:15
     container_name: travelx_db
     environment:
-      POSTGRES_DB: travelx_db
-      POSTGRES_USER: travelx_user
-      POSTGRES_PASSWORD: travelx_pass
+      POSTGRES_DB: ${POSTGRES_DB:-travelx_db}
+      POSTGRES_USER: ${POSTGRES_USER:-travelx_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travelx_pass}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     networks:
       - travelx_network
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U travelx_user -d travelx_db"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,6 +41,7 @@ services:
       - "6379:6379"
     networks:
       - travelx_network
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -42,6 +56,7 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     networks:
       - travelx_network
+    restart: unless-stopped
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -60,84 +75,118 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     networks:
       - travelx_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server kafka:29092 --list > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # One-shot: applies migrations once, before anything that needs the schema
+  # (web, Celery, beat's django_celery_beat tables, consumer, relay).
+  migrate:
+    <<: *app
+    container_name: travelx_migrate
+    command: python manage.py migrate --noinput
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
 
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *app
     container_name: travelx_web
     command: >
-      sh -c "python manage.py migrate &&
+      sh -c "rm -rf \"$$PROMETHEUS_MULTIPROC_DIR\" &&
+             mkdir -p \"$$PROMETHEUS_MULTIPROC_DIR\" &&
              python manage.py collectstatic --noinput &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --reload"
+    environment:
+      # H05: several gunicorn workers need a shared, freshly cleaned directory.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
     volumes:
       - .:/app
       - static_volume:/app/staticfiles
     ports:
       - "8000:8000"
-    env_file:
-      - .env
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - travelx_network
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # H02 liveness endpoint. Needs "localhost" in ALLOWED_HOSTS (the default has it).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live/', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   celery_worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *app
     container_name: travelx_celery_worker
     command: celery -A config worker -l info --concurrency 4
-    volumes:
-      - .:/app
-    env_file:
-      - .env
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - travelx_network
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
 
   celery_beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *app
     container_name: travelx_celery_beat
     command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
-    volumes:
-      - .:/app
-    env_file:
-      - .env
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - travelx_network
+      migrate:
+        condition: service_completed_successfully
 
   kafka_consumer:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *app
     container_name: travelx_kafka_consumer
     command: python manage.py run_consumer
-    volumes:
-      - .:/app
-    env_file:
-      - .env
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - travelx_network
+      kafka:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # G08: moves booking events from the database outbox to Kafka.
+  # Without this service, bookings are saved but their events never leave the DB.
+  outbox_relay:
+    <<: *app
+    container_name: travelx_outbox_relay
+    command: python manage.py publish_outbox
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 #   nginx:
 #     image: nginx:alpine

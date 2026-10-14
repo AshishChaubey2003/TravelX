@@ -1,7 +1,21 @@
 import axios from "axios";
 
+// FE-007: In a production build (`npm run build`), REACT_APP_API_URL MUST be
+// set. A missing value used to silently fall through to the localhost default,
+// which caused prod deployments to look like the backend was dead (every
+// request got ECONNREFUSED against the user's own machine). Hard-failing at
+// module load surfaces the misconfiguration immediately. In development the
+// localhost fallback is kept so `npm start` works out of the box.
+const _envApiUrl = process.env.REACT_APP_API_URL;
+if (!_envApiUrl && process.env.NODE_ENV === "production") {
+  throw new Error(
+    "REACT_APP_API_URL is required for production builds. " +
+      "Set it in the environment before running `npm run build`."
+  );
+}
+
 const API = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || "http://localhost:8000/api/v1",
+  baseURL: _envApiUrl || "http://localhost:8000/api/v1",
 });
 
 // Attach token to every request (if present)

@@ -1,8 +1,21 @@
 venv/
+.venv/
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
 .env
+.env.*
+!.env.example
 db.sqlite3
+*.sqlite3
+# Local SQLite database artifacts (e.g. test.db) and their sidecar files.
+*.db
+*.sqlite
+*.db-journal
+*.db-wal
+*.db-shm
 staticfiles/
 media/
 frontend/node_modules/

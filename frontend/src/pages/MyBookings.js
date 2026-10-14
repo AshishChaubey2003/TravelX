@@ -31,7 +31,7 @@ export default function MyBookings() {
       return;
     }
     loadBookings();
-  }, [token]);
+  }, [token, navigate]);
 
   const loadBookings = async () => {
     try {
@@ -44,14 +44,35 @@ export default function MyBookings() {
   };
 
   const handleRefund = async (bookingId) => {
-    if (!window.confirm("Are you sure you want to cancel and get refund?"))
+    // FE-022: the backend's RefundView only INITIATES a refund (writes
+    // REFUND_PENDING on the Payment); the booking stays PAID and the
+    // inventory is only restored when Razorpay sends the `refund.processed`
+    // webhook. Previously this handler told the user "Refund processed!",
+    // which was a lie — the money has not moved yet when the response
+    // returns. We now describe what actually happened: a request was
+    // submitted, and the user will be notified when it completes.
+    if (
+      !window.confirm(
+        "Submit a refund request for this booking?\n\n" +
+          "The refund can take 5–7 working days to appear on your statement, " +
+          "and your booking will stay 'PAID' until the refund is confirmed."
+      )
+    ) {
       return;
+    }
     try {
       await API.post("/payments/refund/", { booking_id: bookingId });
-      toast.success("Refund processed! 💰");
+      toast.success(
+        "Refund request submitted — we'll email you when it's confirmed.",
+        { duration: 6000 }
+      );
       loadBookings();
     } catch (e) {
-      toast.error(e.response?.data?.error || "Refund failed");
+      toast.error(
+        e.response?.data?.error ||
+          e.response?.data?.detail ||
+          "Refund request could not be submitted."
+      );
     }
   };
 
@@ -327,23 +348,27 @@ export default function MyBookings() {
                     >
                       📅 {booking.check_in} → {booking.check_out}
                     </div>
-                    {/* Refund Button */}
+                    {/* FE-022: Refund request button — label matches what
+                        the API actually does (requests a refund, not
+                        completes one). The booking stays PAID; the status
+                        tag will flip to CANCELLED only after the Razorpay
+                        refund.processed webhook arrives. */}
                     {booking.status === "PAID" && (
                       <button
                         onClick={() => handleRefund(booking.id)}
                         style={{
                           padding: "0.4rem 0.875rem",
                           borderRadius: "8px",
-                          border: "none",
-                          background:
-                            "linear-gradient(135deg, #EF4444, #DC2626)",
-                          color: "white",
+                          border: "1px solid rgba(239,68,68,0.4)",
+                          background: "transparent",
+                          color: "#EF4444",
                           fontSize: "0.75rem",
                           fontWeight: 600,
                           cursor: "pointer",
                         }}
+                        title="Submits a refund request. Confirmation can take 5–7 working days."
                       >
-                        ❌ Cancel & Refund
+                        Request Refund
                       </button>
                     )}
                     {booking.status === "PENDING" && (
@@ -376,9 +401,38 @@ export default function MyBookings() {
                       </div>
                     )}
                     {booking.status === "CONFIRMED" && (
-                      <span style={{ fontSize: "0.75rem", color: "#14B8A6" }}>
-                        ✓ Confirmed
-                      </span>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.75rem",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ fontSize: "0.75rem", color: "#14B8A6" }}>
+                          ✓ Confirmed
+                        </span>
+                        {/* FE-020 (corrected): the backend's BookingCancelView
+                            accepts both PENDING and CONFIRMED. Previously
+                            only PENDING bookings exposed a Cancel button,
+                            so a CONFIRMED (but unpaid) booking was
+                            un-cancellable from the UI. */}
+                        <button
+                          onClick={() => handleCancel(booking.id)}
+                          style={{
+                            padding: "0.35rem 0.9rem",
+                            borderRadius: "50px",
+                            border: "1px solid rgba(239,68,68,0.4)",
+                            background: "transparent",
+                            color: "#EF4444",
+                            fontSize: "0.72rem",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Cancel Booking
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div style={{ textAlign: "right" }}>
