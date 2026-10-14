@@ -281,14 +281,16 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CORS — allow local + your deployed frontend
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000'
-).split(',')
+    default='http://localhost:3000',
+    cast=Csv(),  # strips whitespace per origin; same fix as ALLOWED_HOSTS
+)
 
 # Trust the deployed backend host for CSRF (Render)
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='http://localhost:3000'
-).split(',')
+    default='http://localhost:3000',
+    cast=Csv(),  # strips whitespace per origin; same fix as ALLOWED_HOSTS
+)
 
 # ---------------------------------------------------------------------------
 # Logging (H01): structured logs + request correlation IDs

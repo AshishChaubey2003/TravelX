@@ -119,7 +119,7 @@ class Command(BaseCommand):
         for name, state, lat, lng in CITIES:
             self.stdout.write(f"\nSeeding {name}...")
 
-            city, _ = City.objects.get_or_create(
+            city, created = City.objects.get_or_create(
                 name=name,
                 defaults={
                     "state": state,
@@ -129,6 +129,12 @@ class Command(BaseCommand):
                     "is_active": True,
                 },
             )
+
+            if not created:
+                # Rerun safety: hotels/adventures/vehicles use create(),
+                # so a second run would duplicate them - skip this city.
+                self.stdout.write('  already seeded - skipping (rerun-safe)')
+                continue
 
             # ---- Hotels (3 per city) ----
             for _ in range(3):
