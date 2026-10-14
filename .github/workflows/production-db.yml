@@ -1,0 +1,118 @@
+# Manual-only production database maintenance.
+#
+# How to run: GitHub -> Actions tab -> "Production DB (manual)" ->
+# "Run workflow". This workflow NEVER runs on push, pull request, or deploy -
+# workflow_dispatch is its only trigger.
+#
+# Modes:
+#   diagnose (default)  READ-ONLY report: database target (engine/host/name,
+#                       never credentials), unapplied migrations, and row
+#                       counts for cities/hotels/adventures/vehicles + users.
+#   seed                Prints the same read-only report FIRST, then runs
+#                       `manage.py seed_data` (rerun-safe: fills only missing
+#                       categories, never deletes, never passes --fresh),
+#                       then prints the report again. Requires typing
+#                       SEED-PRODUCTION into the confirm input.
+#
+# Required repository secret (Settings -> Secrets and variables -> Actions):
+#   DATABASE_URL   the production PostgreSQL connection string. Its value is
+#                  never echoed by these steps, and GitHub masks secrets in
+#                  logs as an extra layer.
+# Optional secret:
+#   UNSPLASH_ACCESS_KEY   if set, seeding fetches real image URLs; if not,
+#                         the seeder uses plain keyless URL strings (no
+#                         network calls).
+#
+# Safety gates, in order:
+#   1. workflow_dispatch only - a human must click Run workflow.
+#   2. The job fails fast if the DATABASE_URL secret is missing (otherwise
+#      Django settings would refuse to load anyway: DEBUG=False requires it).
+#   3. diagnose_db --expect-host refuses any database whose host does not
+#      contain the expected substring (default neon.tech).
+#   4. Seeding additionally requires action=seed AND confirm=SEED-PRODUCTION.
+#   5. seed_data itself is idempotent and only ever INSERTs missing rows.
+
+name: Production DB (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "diagnose = read-only report; seed = fill missing catalog data"
+        type: choice
+        options:
+          - diagnose
+          - seed
+        default: diagnose
+        required: true
+      confirm:
+        description: "Type SEED-PRODUCTION to allow seeding (ignored for diagnose)"
+        required: false
+        default: ""
+      expected_host:
+        description: "Substring the database host must contain (safety gate)"
+        required: true
+        default: "neon.tech"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-db
+  cancel-in-progress: false
+
+jobs:
+  production-db:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Django settings refuse to load with DEBUG=False and no SECRET_KEY.
+      # The management commands run here do nothing cryptographic, so this is
+      # a deliberate throwaway value - NEVER put the real production key here.
+      SECRET_KEY: workflow-db-maintenance-throwaway-key
+      DEBUG: "False"
+      UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Require the DATABASE_URL secret (value is never printed)
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::The DATABASE_URL repository secret is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Diagnose (read-only) - current state
+        env:
+          EXPECTED_HOST: ${{ inputs.expected_host }}
+        run: python manage.py diagnose_db --expect-host "$EXPECTED_HOST"
+
+      - name: Guard - seeding requires explicit confirmation
+        if: ${{ inputs.action == 'seed' }}
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "SEED-PRODUCTION" ]; then
+            echo "::error::Refusing to seed: re-run and type SEED-PRODUCTION into the confirm input."
+            exit 1
+          fi
+
+      - name: Seed missing catalog data (rerun-safe, never deletes)
+        if: ${{ inputs.action == 'seed' }}
+        run: python manage.py seed_data
+
+      - name: Diagnose (read-only) - state after seeding
+        if: ${{ inputs.action == 'seed' }}
+        env:
+          EXPECTED_HOST: ${{ inputs.expected_host }}
+        run: python manage.py diagnose_db --expect-host "$EXPECTED_HOST"

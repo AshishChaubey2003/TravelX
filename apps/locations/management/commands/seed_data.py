@@ -131,64 +131,75 @@ class Command(BaseCommand):
             )
 
             if not created:
-                # Rerun safety: hotels/adventures/vehicles use create(),
-                # so a second run would duplicate them - skip this city.
-                self.stdout.write('  already seeded - skipping (rerun-safe)')
-                continue
+                # Rerun safety: the city row is reused (get_or_create), and
+                # each category below is created only when this city has none
+                # of it. Reruns therefore fill gaps without duplicating or
+                # touching existing records - and every skip is reported, so
+                # a partially populated city is never passed over silently.
+                self.stdout.write('  city exists - filling missing categories only')
 
             # ---- Hotels (3 per city) ----
-            for _ in range(3):
-                hname = f"{random.choice(HOTEL_PREFIXES)} {random.choice(HOTEL_SUFFIXES)}"
-                rooms = random.randint(15, 60)
-                Hotel.objects.create(
-                    city=city,
-                    name=hname,
-                    description=f"A comfortable stay in {name} with modern amenities and great service.",
-                    price_per_night=Decimal(str(random.randint(1500, 12000))),
-                    total_rooms=rooms,
-                    available_rooms=random.randint(3, rooms),
-                    latitude=Decimal(str(jitter(lat))),
-                    longitude=Decimal(str(jitter(lng))),
-                    amenities=random.sample(AMENITIES_POOL, k=random.randint(4, 7)),
-                    rating=Decimal(str(round(random.uniform(3.5, 5.0), 1))),
-                    image_url=get_image(f"{name} hotel resort", "hotel,resort"),
-                    is_active=True,
-                )
-            self.stdout.write(f"  + 3 hotels")
+            if Hotel.objects.filter(city=city).exists():
+                self.stdout.write('  hotels already present - skipped (no duplicates)')
+            else:
+                for _ in range(3):
+                    hname = f"{random.choice(HOTEL_PREFIXES)} {random.choice(HOTEL_SUFFIXES)}"
+                    rooms = random.randint(15, 60)
+                    Hotel.objects.create(
+                        city=city,
+                        name=hname,
+                        description=f"A comfortable stay in {name} with modern amenities and great service.",
+                        price_per_night=Decimal(str(random.randint(1500, 12000))),
+                        total_rooms=rooms,
+                        available_rooms=random.randint(3, rooms),
+                        latitude=Decimal(str(jitter(lat))),
+                        longitude=Decimal(str(jitter(lng))),
+                        amenities=random.sample(AMENITIES_POOL, k=random.randint(4, 7)),
+                        rating=Decimal(str(round(random.uniform(3.5, 5.0), 1))),
+                        image_url=get_image(f"{name} hotel resort", "hotel,resort"),
+                        is_active=True,
+                    )
+                self.stdout.write("  + 3 hotels")
 
             # ---- Adventures (3 per city) ----
-            for adv_name, difficulty, hours in random.sample(ADVENTURES, k=3):
-                cap = random.randint(10, 30)
-                Adventure.objects.create(
-                    city=city,
-                    name=adv_name,
-                    description=f"Experience {adv_name.lower()} in {name}. A must-do activity for thrill seekers.",
-                    price_per_person=Decimal(str(random.randint(500, 5000))),
-                    max_capacity=cap,
-                    current_bookings=random.randint(0, cap // 2),
-                    duration_hours=hours,
-                    difficulty=difficulty,
-                    latitude=Decimal(str(jitter(lat))),
-                    longitude=Decimal(str(jitter(lng))),
-                    image_url=get_image(f"{adv_name} adventure", "adventure,outdoor"),
-                    is_active=True,
-                )
-            self.stdout.write(f"  + 3 adventures")
+            if Adventure.objects.filter(city=city).exists():
+                self.stdout.write('  adventures already present - skipped (no duplicates)')
+            else:
+                for adv_name, difficulty, hours in random.sample(ADVENTURES, k=3):
+                    cap = random.randint(10, 30)
+                    Adventure.objects.create(
+                        city=city,
+                        name=adv_name,
+                        description=f"Experience {adv_name.lower()} in {name}. A must-do activity for thrill seekers.",
+                        price_per_person=Decimal(str(random.randint(500, 5000))),
+                        max_capacity=cap,
+                        current_bookings=random.randint(0, cap // 2),
+                        duration_hours=hours,
+                        difficulty=difficulty,
+                        latitude=Decimal(str(jitter(lat))),
+                        longitude=Decimal(str(jitter(lng))),
+                        image_url=get_image(f"{adv_name} adventure", "adventure,outdoor"),
+                        is_active=True,
+                    )
+                self.stdout.write("  + 3 adventures")
 
             # ---- Vehicles (3 per city) ----
-            for vname, vtype in random.sample(VEHICLES, k=3):
-                price = {"BIKE": (600, 1500), "SCOOTER": (400, 900), "CAR": (1500, 4000)}[vtype]
-                Vehicle.objects.create(
-                    city=city,
-                    name=vname,
-                    vehicle_type=vtype,
-                    price_per_day=Decimal(str(random.randint(*price))),
-                    is_available=True,
-                    latitude=Decimal(str(jitter(lat))),
-                    longitude=Decimal(str(jitter(lng))),
-                    image_url=get_image(f"{vname} {vtype}", "vehicle,transport"),
-                )
-            self.stdout.write(f"  + 3 vehicles")
+            if Vehicle.objects.filter(city=city).exists():
+                self.stdout.write('  vehicles already present - skipped (no duplicates)')
+            else:
+                for vname, vtype in random.sample(VEHICLES, k=3):
+                    price = {"BIKE": (600, 1500), "SCOOTER": (400, 900), "CAR": (1500, 4000)}[vtype]
+                    Vehicle.objects.create(
+                        city=city,
+                        name=vname,
+                        vehicle_type=vtype,
+                        price_per_day=Decimal(str(random.randint(*price))),
+                        is_available=True,
+                        latitude=Decimal(str(jitter(lat))),
+                        longitude=Decimal(str(jitter(lng))),
+                        image_url=get_image(f"{vname} {vtype}", "vehicle,transport"),
+                    )
+                self.stdout.write("  + 3 vehicles")
 
             # gentle pause so Unsplash rate limit (50/hr) isn't hit too fast
             if UNSPLASH_ACCESS_KEY:
